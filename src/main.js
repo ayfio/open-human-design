@@ -1,7 +1,7 @@
 /**
- * Bodygraph App — Main Application
+ * Open Human Design — Main Application
  *
- * A beautiful, interactive Human Design chart application
+ * An open-source, interactive Human Design chart application
  * powered by NatalEngine.
  */
 

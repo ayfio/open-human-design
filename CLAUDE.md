@@ -1,8 +1,8 @@
-# CLAUDE.md — Bodygraph App
+# CLAUDE.md — Open Human Design
 
 ## Overview
 
-Bodygraph is a standalone Human Design chart application powered by NatalEngine.
+Open Human Design (Open HD) is an open-source Human Design chart application powered by NatalEngine.
 It provides an interactive, beautiful experience for exploring your Human Design chart
 with progressive disclosure from basics to advanced features.
 

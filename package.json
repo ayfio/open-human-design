@@ -1,7 +1,7 @@
 {
-  "name": "bodygraph-app",
+  "name": "open-human-design",
   "version": "0.1.0",
-  "description": "A beautiful, interactive Human Design chart application",
+  "description": "Open Human Design — an open-source, interactive Human Design chart app",
   "type": "module",
   "scripts": {
     "dev": "vite",
