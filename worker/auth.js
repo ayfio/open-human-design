@@ -17,6 +17,16 @@ import { magicLink } from 'better-auth/plugins';
 import { D1Dialect } from 'kysely-d1';
 
 async function sendMagicLinkEmail(env, { email, url }) {
+  try {
+    await trySendEmail(env, { email, url });
+  } catch (err) {
+    // Domain not onboarded yet / transient send failure — never 500 the
+    // sign-in flow; surface the link in logs so wrangler tail can rescue.
+    console.warn(`[magic-link] email send failed (${err.message}); link for ${email} → ${url}`);
+  }
+}
+
+async function trySendEmail(env, { email, url }) {
   if (env.SEND_EMAIL) {
     // Cloudflare Email Service binding — domain onboarded via
     // `wrangler email sending enable openhumandesign.com`.
