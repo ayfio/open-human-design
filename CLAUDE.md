@@ -22,7 +22,7 @@ npx wrangler deploy  # Deploy to Cloudflare (needs wrangler login)
 ## Setup & hosting
 
 `natalengine` comes from npm (`^1.2.0`). For engine development, clone
-[Unforced-Dev/natal-engine](https://github.com/Unforced-Dev/natal-engine) as a sibling and
+[Unforced-Dev/natal-engine](https://github.com/Unforced-Dev/natalengine) as a sibling and
 `npm link`/`file:` it temporarily — but published versions are the default.
 
 **Primary hosting**: Cloudflare Worker → https://openhumandesign.com (SPA + `/mcp`), deployed

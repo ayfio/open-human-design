@@ -63,7 +63,7 @@ npm run e2e    # browser smoke test (dev server must be running)
 npm run build  # production build
 ```
 
-Powered by [NatalEngine](https://github.com/Unforced-Dev/natal-engine) — an open, MIT-licensed
+Powered by [NatalEngine](https://github.com/Unforced-Dev/natalengine) — an open, MIT-licensed
 birth chart engine for Human Design, Western astrology, Vedic astrology, and Gene Keys, with an
 MCP server for AI integrations.
 
