@@ -1219,9 +1219,22 @@ body {
   line-height: 1.6;
 }
 
-.banner-actions { margin-top: 14px; }
+.banner-actions { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
 
 .btn-small { font-size: 12px; padding: 6px 12px; }
+
+/* "X invited you to compare" banner above the entry form (dyad loop) */
+.entry-invite {
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  background: var(--accent-soft);
+  color: var(--text);
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+.entry-invite strong { color: var(--accent-strong); }
 
 /* =============================================
    Gate detail card

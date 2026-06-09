@@ -1,12 +1,14 @@
 /**
- * Dynamic OpenGraph images — /og/card.png?d=…&t=…&tz=…&n=…&theme=…
+ * Dynamic OpenGraph + share images — /og/card.png?d=…&t=…&tz=…&n=…&theme=…
  *
- * Pipeline: birth params → calculateHumanDesign (~1ms) →
- * renderChartCardSVG (engine's pure renderer) → resvg-wasm → PNG.
- * Deterministic per params, so cached at the edge effectively forever.
+ * Pipeline: birth params → calculateHumanDesign (~1ms) → engine's pure card
+ * renderer → resvg-wasm → PNG. Deterministic per params, edge-cached forever.
+ *   default            → 1200×630 OpenGraph card (unfurls)
+ *   ?format=story      → 1080×1920 vertical card (Reels / Stories / TikTok)
+ *   ?format=square     → 1080×1080 square card (posts)
  */
 
-import { calculateHumanDesign, renderChartCardSVG, renderBodygraphSVG } from 'natalengine';
+import { calculateHumanDesign, renderChartCardSVG, renderStoryCardSVG, renderBodygraphSVG } from 'natalengine';
 import { svgToPng } from './render.js';
 
 export function parseChartParams(searchParams) {
@@ -42,12 +44,17 @@ export async function handleOgImage(request) {
   if (cached) return cached;
 
   const chart = computeForParams(params);
-  const svg = renderChartCardSVG(chart, {
-    name: params.name,
-    theme: url.searchParams.get('theme') === 'dark' ? 'dark' : 'light',
-    fontFamily: 'Inter'
-  });
-  const png = await svgToPng(svg, 1200);
+  const theme = url.searchParams.get('theme') === 'dark' ? 'dark' : 'light';
+  const format = url.searchParams.get('format');
+  let svg, width;
+  if (format === 'story' || format === 'square') {
+    svg = renderStoryCardSVG(chart, { name: params.name, format, theme, fontFamily: 'Inter' });
+    width = 1080;
+  } else {
+    svg = renderChartCardSVG(chart, { name: params.name, theme, fontFamily: 'Inter' });
+    width = 1200;
+  }
+  const png = await svgToPng(svg, width);
 
   const response = new Response(png, {
     headers: {

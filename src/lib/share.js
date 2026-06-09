@@ -63,3 +63,14 @@ export function shareUrl(birth) {
   const base = `${window.location.origin}${window.location.pathname}`;
   return `${base}?${birthToParams(birth)}`;
 }
+
+/**
+ * A "compare designs with me" invite. Opening it sets the sender as the other
+ * person and walks the recipient straight to their connection chart (the dyad
+ * loop). The sender's birth is the payload; `connect=1` flips the boot flow.
+ */
+export function connectionUrl(birth) {
+  const p = birthToParams(birth);
+  p.set('connect', '1');
+  return `${window.location.origin}${window.location.pathname}?${p}`;
+}

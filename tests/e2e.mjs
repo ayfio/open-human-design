@@ -187,6 +187,28 @@ await check('shared person retained for comparison (P1-11)', async () => {
   await ctx.close();
 });
 
+// --- Dyad: a "compare with me" invite walks the recipient to the comparison ---
+await check('connection invite auto-runs the comparison (dyad loop)', async () => {
+  const ctx = await browser.newContext();
+  const p3 = await ctx.newPage();
+  p3.on('pageerror', err => fail('dyad page JS error', err.message));
+  await p3.goto(`${BASE}?d=1975-12-01&t=06:30&tz=-5&n=Inviter&connect=1`);
+  await p3.waitForSelector('#entry-invite:not(.hidden)', { timeout: 5000 });
+  const cta = await p3.textContent('#entry-invite');
+  if (!/Inviter/.test(cta)) throw new Error('invite banner missing: ' + cta);
+  await p3.fill('#birth-name', 'Recipient');
+  await p3.fill('#birth-date', '1990-06-15');
+  await p3.fill('#birth-time', '14:30');
+  await p3.fill('#birth-place', 'Boulder');
+  await p3.waitForSelector('.place-result', { timeout: 8000 });
+  await p3.click('.place-result:first-child');
+  await p3.click('#birth-form button[type=submit]');
+  await p3.waitForSelector('#connection-content .foundation-item', { timeout: 6000 });
+  const content = await p3.textContent('#connection-content');
+  if (!/Composite Type/.test(content)) throw new Error('comparison not shown: ' + content.slice(0, 120));
+  await ctx.close();
+});
+
 await browser.close();
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll e2e checks passed');

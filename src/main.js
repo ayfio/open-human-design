@@ -14,13 +14,14 @@ import { paramsToBirth, birthToParams, shareUrl } from './lib/share.js';
 import { setupEntryView } from './views/entry.js';
 import { renderChartView, setupPanelTabs, rerenderBodygraph } from './views/chart.js';
 import { setupTransitView, renderTransits } from './views/transits.js';
-import { setupConnectionView, renderConnectionView } from './views/connection.js';
+import { setupConnectionView, renderConnectionView, compareWithGuest } from './views/connection.js';
 import { setupTeamView, renderTeamView } from './views/team.js';
 
 // ==========================================
 // State
 // ==========================================
 let currentData = null; // { birth, chart, geneKeys, sensitivity }
+let pendingCompare = false; // a connection invite is waiting for the visitor's own chart
 let entryApi = null;
 
 // ==========================================
@@ -335,14 +336,46 @@ function init() {
   setupSync();
 
   entryApi = setupEntryView({
-    onSubmit: (birth, { savedPerson = false } = {}) =>
-      loadBirth(birth, { save: !savedPerson && !!birth.name })
+    onSubmit: (birth, { savedPerson = false } = {}) => {
+      loadBirth(birth, { save: !savedPerson && !!birth.name });
+      if (pendingCompare) {
+        pendingCompare = false;
+        document.getElementById('entry-invite')?.classList.add('hidden');
+        showView('connection');
+        compareWithGuest();
+      }
+    }
   });
 
-  // Boot order: shared URL → last person → entry form
+  // Boot order: connection invite → shared URL → last person → entry form
   // (read the deep-link view before loadBirth rewrites the URL)
   const deepLinkView = new URLSearchParams(window.location.search).get('view');
+  const connectInvite = new URLSearchParams(window.location.search).get('connect') === '1';
   const fromUrl = paramsToBirth(window.location.search.slice(1));
+
+  if (fromUrl && connectInvite) {
+    // "Compare designs with me" invite: the sender is the OTHER person.
+    setSharedGuest(fromUrl);
+    history.replaceState(null, '', window.location.pathname); // don't re-trigger on reload
+    const lastId = getLastPersonId();
+    const me = lastId && getPerson(lastId);
+    if (me) {
+      loadBirth(birthFromPerson(me), { save: false }); // returning visitor → straight to the compare
+      showView('connection');
+      compareWithGuest();
+    } else {
+      pendingCompare = true; // new visitor enters their chart first, then we compare
+      const invite = document.getElementById('entry-invite');
+      if (invite) {
+        invite.innerHTML = `<strong>${esc(fromUrl.name || 'Someone')}</strong> invited you to compare designs — enter your birth below to see your connection.`;
+        invite.classList.remove('hidden');
+      }
+      document.getElementById('birth-entry')?.classList.remove('hidden');
+      renderPeopleSwitcher();
+    }
+    return;
+  }
+
   if (fromUrl) {
     loadBirth(fromUrl, { save: false });
     if (deepLinkView && VIEWS.includes(deepLinkView)) showView(deepLinkView);

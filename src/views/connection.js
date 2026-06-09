@@ -43,6 +43,16 @@ export function renderConnectionView() {
   };
 }
 
+/** Dyad loop: select the shared/invited person and run the comparison. */
+export function compareWithGuest() {
+  renderConnectionView();
+  const select = document.getElementById('conn-person');
+  if (!select || ![...select.options].some(o => o.value === '__guest')) return;
+  select.value = '__guest';
+  document.getElementById('conn-manual')?.classList.add('hidden');
+  runComparison();
+}
+
 function runComparison() {
   const current = getCurrentChart();
   if (!current) return;

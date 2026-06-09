@@ -22,6 +22,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 import { renderBodygraph, PLANET_ORDER, PLANET_GLYPHS, PLANET_NAMES } from '../bodygraph.js';
 import { esc, formatBirth } from '../lib/format.js';
+import { birthToParams, connectionUrl } from '../lib/share.js';
 
 let current = null; // { birth, chart, geneKeys }
 let bodygraphApi = null;
@@ -66,6 +67,8 @@ export function renderChartView(data, { onShare } = {}) {
     <p class="type-plain">${esc(TYPE_PLAIN[chart.type.name] || '')}</p>
     <div class="banner-actions">
       <button id="share-chart" class="btn-secondary btn-small">Copy chart link</button>
+      <button id="save-image" class="btn-secondary btn-small">Save image</button>
+      <button id="invite-compare" class="btn-secondary btn-small">Invite to compare</button>
     </div>
   `;
   document.getElementById('share-chart').addEventListener('click', async (e) => {
@@ -77,6 +80,45 @@ export function renderChartView(data, { onShare } = {}) {
       e.target.textContent = 'Copy blocked — use the address bar URL';
     }
     setTimeout(() => { e.target.textContent = 'Copy chart link'; }, 2500);
+  });
+
+  // Download a 9:16 share card (Reels / Stories / TikTok), rendered by the
+  // Worker's /og endpoint. (No-op offline / on the static mirror.)
+  document.getElementById('save-image').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.textContent = 'Preparing…';
+    try {
+      const params = birthToParams(birth);
+      params.set('format', 'story');
+      if (document.documentElement.getAttribute('data-theme') === 'dark') params.set('theme', 'dark');
+      const res = await fetch(`/og/card.png?${params}`);
+      if (!res.ok) throw new Error('render failed');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${(birth.name || 'human-design').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-chart.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      btn.textContent = 'Saved ✓';
+    } catch {
+      btn.textContent = 'Image unavailable here';
+    }
+    setTimeout(() => { btn.textContent = 'Save image'; }, 2500);
+  });
+
+  // Dyad loop: copy a "compare designs with me" link. Whoever opens it goes
+  // straight to their connection chart against this person.
+  document.getElementById('invite-compare').addEventListener('click', async (e) => {
+    const btn = e.target;
+    try {
+      await navigator.clipboard.writeText(connectionUrl(birth));
+      btn.textContent = 'Invite copied ✓';
+    } catch {
+      btn.textContent = 'Copy blocked — use the address bar';
+    }
+    setTimeout(() => { btn.textContent = 'Invite to compare'; }, 2500);
   });
 
   // --- Bodygraph ---
