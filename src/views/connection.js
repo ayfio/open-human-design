@@ -7,11 +7,21 @@ import { compareHumanDesign } from 'natalengine';
 import { renderBodygraph } from '../bodygraph.js';
 import { computeChart } from '../lib/chartdata.js';
 import { listPeople, birthFromPerson } from '../lib/people.js';
+import { createPlaceSearch } from '../lib/placesearch.js';
 import { esc } from '../lib/format.js';
 import { getCurrentChart } from './chart.js';
 
+let placeB = null;
+
 export function setupConnectionView() {
   document.getElementById('conn-calculate').addEventListener('click', runComparison);
+  placeB = createPlaceSearch(document.getElementById('conn-place'), {
+    placeholder: 'Birth place (resolves the timezone)',
+    getDateTime: () => ({
+      date: document.getElementById('conn-date').value,
+      time: document.getElementById('conn-time').value
+    })
+  });
 }
 
 /** Refresh the saved-people picker each time the view opens. */
@@ -42,11 +52,15 @@ function runComparison() {
   } else {
     const date = document.getElementById('conn-date').value;
     if (!date) return;
+    const time = document.getElementById('conn-time').value || '12:00';
+    const loc = placeB?.getBirthLocation(date, time);
+    if (!loc) { placeB?.flagMissing(); return; } // no silent UTC=0
     birthB = {
       name: document.getElementById('conn-name').value.trim() || 'Person B',
       birthDate: date,
-      birthTime: document.getElementById('conn-time').value || '12:00',
-      timezone: parseFloat(document.getElementById('conn-tz').value) || 0
+      birthTime: time,
+      timezone: loc.timezone,
+      location: loc.lat != null ? loc : null
     };
   }
   if (!birthB) return;

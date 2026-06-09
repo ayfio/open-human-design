@@ -6,6 +6,7 @@
 import { analyzePenta } from 'natalengine';
 import { computeChart } from '../lib/chartdata.js';
 import { listPeople, birthFromPerson } from '../lib/people.js';
+import { createPlaceSearch } from '../lib/placesearch.js';
 import { esc } from '../lib/format.js';
 import { getCurrentChart } from './chart.js';
 
@@ -45,10 +46,15 @@ function addMemberRow() {
     <input type="text" class="team-name" placeholder="Name">
     <input type="date" class="team-date" required>
     <input type="time" class="team-time" value="12:00">
-    <input type="number" class="team-tz" value="0" min="-12" max="14" step="0.5" placeholder="UTC" title="UTC offset">
+    <div class="team-place"></div>
     <button class="remove-member" title="Remove">&times;</button>
   `;
-  row.querySelector('.remove-member').addEventListener('click', () => row.remove());
+  const ps = createPlaceSearch(row.querySelector('.team-place'), {
+    placeholder: 'Birth place',
+    getDateTime: () => ({ date: row.querySelector('.team-date').value, time: row.querySelector('.team-time').value })
+  });
+  row._placeSearch = ps;
+  row.querySelector('.remove-member').addEventListener('click', () => { ps.destroy(); row.remove(); });
   membersContainer.appendChild(row);
 }
 
@@ -74,13 +80,14 @@ function runTeamAnalysis() {
   });
 
   // Quick-add rows
-  document.querySelectorAll('#team-members .team-member-row').forEach((row, i) => {
+  document.querySelectorAll('#team-members .team-member-row').forEach((row) => {
     const date = row.querySelector('.team-date').value;
     if (!date) return;
     const time = row.querySelector('.team-time').value || '12:00';
-    const tz = parseFloat(row.querySelector('.team-tz').value) || 0;
+    const loc = row._placeSearch?.getBirthLocation(date, time);
+    if (!loc) { row._placeSearch?.flagMissing(); return; } // skip rather than chart at UTC=0
     const name = row.querySelector('.team-name').value.trim() || `Person ${charts.length + 1}`;
-    const data = computeChart({ birthDate: date, birthTime: time, timezone: tz });
+    const data = computeChart({ birthDate: date, birthTime: time, timezone: loc.timezone, location: loc.lat != null ? loc : null });
     charts.push(data.chart);
     names.push(name);
   });

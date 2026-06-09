@@ -101,25 +101,39 @@ await check('transits view renders with overlay graph', async () => {
 });
 
 // --- Connection with manual person ---
-await check('connection compare works', async () => {
+// Shared place-search helper (Connection / Team): type → pick first result.
+async function pickPlace(scope, query) {
+  await page.fill(`${scope} .ps-input`, query);
+  await page.waitForSelector(`${scope} .ps-result`, { timeout: 8000 });
+  await page.click(`${scope} .ps-result`);
+  await page.waitForSelector(`${scope} .ps-chip`, { timeout: 5000 }); // offset resolved
+}
+
+await check('connection compare works (place search resolves tz)', async () => {
   await page.click('.nav-link[data-view="connection"]');
   await page.fill('#conn-name', 'Partner');
   await page.fill('#conn-date', '1985-03-20');
   await page.fill('#conn-time', '08:00');
-  await page.fill('#conn-tz', '1');
+  await pickPlace('#conn-place', 'London');
   await page.click('#conn-calculate');
   await page.waitForSelector('#connection-content .foundation-item', { timeout: 5000 });
   const content = await page.textContent('#connection-content');
   if (!/Composite Type/.test(content)) throw new Error(content.slice(0, 120));
 });
 
-// --- Team using the saved person + manual rows ---
-await check('team analysis works', async () => {
+// --- Team using manual rows with place search ---
+await check('team analysis works (place search per row)', async () => {
   await page.click('.nav-link[data-view="team"]');
-  await page.click('#add-member');
-  await page.fill('#team-members .team-date', '1992-11-02');
-  await page.click('#add-member');
-  await page.fill('#team-members .team-member-row:nth-child(2) .team-date', '1985-03-20');
+  await page.click('#add-member'); // one row exists from init; now two
+  const rows = [
+    { date: '1992-11-02', place: 'Tokyo' },
+    { date: '1985-03-20', place: 'Paris' },
+  ];
+  for (let i = 0; i < rows.length; i++) {
+    const sel = `#team-members .team-member-row:nth-child(${i + 1})`;
+    await page.fill(`${sel} .team-date`, rows[i].date);
+    await pickPlace(`${sel} .team-place`, rows[i].place);
+  }
   await page.click('#team-calculate');
   await page.waitForSelector('#team-content .role-card', { timeout: 5000 });
 });
