@@ -115,29 +115,90 @@ test('saved names rejected without auth props', async () => {
   assert.match(result.content[0].text, /personal connector|sign in/i);
 });
 
-test('compute_chart surfaces the bodygraph image (svg resource + link)', async () => {
-  // image:"svg" avoids the Worker-only rasterizer (PNG) so this runs under Node.
+test('compute_chart default renders the inline panel (structuredContent + _meta, zero-token)', async () => {
+  const result = await rpc('tools/call', {
+    name: 'compute_chart',
+    arguments: { birth: { birthDate: '1990-06-15', birthTime: '14:30', utcOffset: -6 } }
+  });
+  assert.equal(result.content[0].type, 'text'); // JSON data still first
+  // Panel data delivered out-of-band via structuredContent (not model context).
+  const sc = result.structuredContent;
+  assert.ok(sc?.svg?.startsWith('<svg'), 'inline SVG markup in structuredContent');
+  assert.ok(sc.svg.includes('<path'), 'svg is the real bodygraph');
+  assert.ok(!sc.svg.includes('data-gate'), 'svg is trimmed (interactive hooks stripped)');
+  assert.ok(sc.svgUrl?.includes('/chart.svg?'), 'svgUrl fallback present');
+  assert.equal(result._meta?.ui?.resourceUri, 'ui://open-human-design/chart');
+  // No heavy SVG markup dumped into MODEL context — that's the zero-token win.
+  assert.ok(!result.content.some(c => c.text?.includes('<svg')), 'no inline SVG in model content');
+  const link = result.content.find(c => c.text?.includes('openhumandesign.com/?'));
+  assert.ok(link, 'interactive link fallback present');
+});
+
+test('compute_chart image:"svg" embeds the artifact for non-panel clients', async () => {
   const result = await rpc('tools/call', {
     name: 'compute_chart',
     arguments: { birth: { birthDate: '1990-06-15', birthTime: '14:30', utcOffset: -6 }, image: 'svg' }
   });
-  assert.equal(result.content[0].type, 'text'); // JSON data still first
-  const svgRes = result.content.find(c => c.type === 'resource');
-  assert.ok(svgRes, 'has an embedded resource');
-  assert.equal(svgRes.resource.mimeType, 'image/svg+xml');
-  assert.ok(svgRes.resource.text.startsWith('<svg'));
-  assert.ok(svgRes.resource.text.includes('data-gate'));
-  const link = result.content.find(c => c.type === 'text' && c.text.includes('/chart.svg?'));
-  assert.ok(link, 'includes an SVG link');
+  const svgBlock = result.content.find(c => c.type === 'text' && c.text.includes('<svg') && /artifact/i.test(c.text));
+  assert.ok(svgBlock, 'SVG-for-artifact block present');
+  assert.ok(svgBlock.text.includes('data-gate'));
+  assert.ok(result.structuredContent?.svgUrl, 'panel data still attached alongside the fallback');
 });
 
-test('compute_chart image:"none" omits image content', async () => {
+test('compute_chart image:"none" omits the fallback image but keeps the panel', async () => {
   const result = await rpc('tools/call', {
     name: 'compute_chart',
     arguments: { birth: { birthDate: '1990-06-15', birthTime: '14:30', utcOffset: -6 }, image: 'none' }
   });
-  assert.equal(result.content.length, 1);
+  assert.equal(result.content.length, 1); // JSON only
   assert.equal(result.content[0].type, 'text');
+  assert.ok(result.structuredContent?.svgUrl, 'panel still renders'); // tool-scoped
+});
+
+test('MCP Apps: compute_chart tool definition links the ui:// panel resource', async () => {
+  const { tools } = await rpc('tools/list');
+  const cc = tools.find(t => t.name === 'compute_chart');
+  assert.equal(cc._meta?.ui?.resourceUri, 'ui://open-human-design/chart');
+  assert.equal(cc._meta?.['ui/resourceUri'], 'ui://open-human-design/chart'); // legacy alias too
+});
+
+test('MCP Apps: resources/list + resources/read expose the panel with the resourceDomains CSP', async () => {
+  const { resources } = await rpc('resources/list');
+  const r = resources.find(x => x.uri === 'ui://open-human-design/chart');
+  assert.ok(r, 'widget resource listed');
+  assert.equal(r.mimeType, 'text/html;profile=mcp-app');
+
+  const read = await rpc('resources/read', { uri: 'ui://open-human-design/chart' });
+  const c0 = read.contents[0];
+  assert.equal(c0.mimeType, 'text/html;profile=mcp-app');
+  assert.deepEqual(c0._meta?.ui?.csp?.resourceDomains, ['https://openhumandesign.com']);
+  assert.ok(c0.text.startsWith('<!doctype html'), 'serves the panel HTML');
+  assert.ok(!c0.text.includes('1990'), 'panel HTML is static (no baked-in birth data)');
+});
+
+test('resources/read rejects an unknown uri', async () => {
+  await assert.rejects(() => rpc('resources/read', { uri: 'ui://open-human-design/nope' }));
+});
+
+test('delete_person disambiguates duplicate names; deletes by id', async () => {
+  const dup = [
+    { id: 'a', name: 'Kurt Cobain', birth_date: '1967-02-20', loc_name: 'Aberdeen, Scotland' },
+    { id: 'b', name: 'Kurt Cobain', birth_date: '1967-02-20', loc_name: 'Aberdeen, Washington' }
+  ];
+  const ambiguous = await rpcPersonal('tools/call', { name: 'delete_person', arguments: { name: 'Kurt Cobain' } }, stubDb(dup));
+  const out = JSON.parse(ambiguous.content[0].text);
+  assert.ok(out.ambiguous, 'returns an ambiguity note');
+  assert.equal(out.candidates.length, 2);
+  assert.ok(out.candidates.every(c => c.id && c.place));
+
+  const byId = await rpcPersonal('tools/call', { name: 'delete_person', arguments: { id: 'a' } }, stubDb([dup[0]]));
+  assert.equal(JSON.parse(byId.content[0].text).deleted, 'Kurt Cobain');
+});
+
+test('list_people exposes ids for precise deletion', async () => {
+  const db = stubDb([{ id: 'p1', name: 'Mom', birth_date: '1962-04-11', time_unknown: 0, birth_time: '08:15', loc_name: 'Denver', ai_access: 1, deleted_at: null }]);
+  const out = JSON.parse((await rpcPersonal('tools/call', { name: 'list_people', arguments: {} }, db)).content[0].text);
+  assert.equal(out.people[0].id, 'p1');
 });
 
 test('compute_chart with explicit offset', async () => {
