@@ -191,6 +191,18 @@ await check('connection compare works (place search resolves tz)', async () => {
   await page.waitForSelector('#connection-content .foundation-item', { timeout: 5000 });
   const content = await page.textContent('#connection-content');
   if (!/How you decide together/.test(content)) throw new Error(content.slice(0, 120));
+  // The combined (composite) chart renders, has a legend, and is interactive.
+  await page.waitForSelector('#conn-composite .bodygraph-svg', { timeout: 5000 });
+  if (!(await page.$('.composite-legend'))) throw new Error('composite legend missing');
+  const cg = await page.evaluate(() => {
+    const el = document.querySelector('#conn-composite .bg-gate-circle:not([fill="transparent"])')?.closest('[data-gate]');
+    return el?.getAttribute('data-gate');
+  });
+  if (!cg) throw new Error('no active gate found on composite chart');
+  await page.click(`#conn-composite .bg-gate[data-gate="${cg}"]`);
+  await page.waitForSelector('#conn-detail:not(.hidden) .gate-detail-card', { timeout: 3000 });
+  if (!/Carried by/.test(await page.textContent('#conn-detail')))
+    throw new Error('composite gate detail did not render');
 });
 
 // --- Team using manual rows with place search ---

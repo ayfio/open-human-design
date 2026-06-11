@@ -3,7 +3,7 @@
  * chart; Person B comes from saved people or a quick manual entry.
  */
 
-import { compareHumanDesign } from 'natalengine';
+import { compareHumanDesign, GATES, CHANNELS } from 'natalengine';
 import { renderBodygraph } from '../bodygraph.js';
 import { computeChart } from '../lib/chartdata.js';
 import { listPeople, birthFromPerson, getSharedGuest } from '../lib/people.js';
@@ -86,6 +86,30 @@ function runComparison() {
   renderConnectionContent(comparison, current, b);
 }
 
+// Person colors for the combined chart (theme-aware): teal = A, coral = B,
+// gold = a channel/center the two only complete together.
+function compositePalette() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  return dark
+    ? { a: '#3db5a5', b: '#e8927a', bridged: '#cda64a' }
+    : { a: '#2a9d8f', b: '#e07a5f', bridged: '#d4a23a' };
+}
+
+const CENTER_DISPLAY = {
+  head: 'Head', ajna: 'Ajna', throat: 'Throat', g: 'G',
+  heart: 'Ego', spleen: 'Spleen', solar: 'Solar Plexus', sacral: 'Sacral', root: 'Root'
+};
+const DYN_LABEL = {
+  electromagnetic: 'Electromagnetic', companionship: 'Companionship',
+  compromise: 'Compromise', dominance: 'Dominance'
+};
+const DYN_BLURB = {
+  electromagnetic: 'You each bring one half — together you complete it. Spark, and the friction that rides with it.',
+  companionship: 'You both carry the whole channel — easy, shared common ground.',
+  compromise: 'One of you has the full channel, the other only half — the full side sets the tone.',
+  dominance: 'One of you has the whole channel, the other has none of it — it flows one way.'
+};
+
 // The four ways two charts share channels — explained, with the circuit each
 // connection runs through (individual / tribal / collective / integration).
 const CONN_TYPES = [
@@ -137,19 +161,37 @@ function renderConnectionContent(comparison, a, b) {
   const bothDefined = cd.filter(c => c.dynamic === 'Both Defined').map(c => c.centerName);
   const bothOpen = cd.filter(c => c.dynamic === 'Both Open').map(c => c.centerName);
 
+  const cpal = compositePalette();
+
   container.innerHTML = `
-    <div class="connection-graphs">
-      <div class="connection-graph">
-        <div class="connection-graph-name">${esc(nameA)}</div>
-        <div class="connection-graph-type">${esc(a.chart.type.name)} ${esc(a.chart.profile.numbers)}</div>
-        <div id="conn-graph-a"></div>
+    <div class="composite-wrap">
+      <div class="panel-title">Your charts combined</div>
+      <p class="panel-intro">One body, both of you — each half-channel colored by who brings it. A <strong>two-tone</strong> channel is an electromagnetic bond you only complete together. Hover or tap any gate, channel, or center.</p>
+      <div class="composite-legend">
+        <span class="lg"><i style="background:${cpal.a}"></i>${esc(nameA)}</span>
+        <span class="lg"><i style="background:${cpal.b}"></i>${esc(nameB)}</span>
+        <span class="lg"><i class="lg-stripe" style="background:linear-gradient(45deg, ${cpal.a} 0 50%, ${cpal.b} 50% 100%)"></i>Both have it</span>
+        <span class="lg"><i style="background:${cpal.bridged}"></i>Made together</span>
       </div>
-      <div class="connection-graph">
-        <div class="connection-graph-name">${esc(nameB)}</div>
-        <div class="connection-graph-type">${esc(b.chart.type.name)} ${esc(b.chart.profile.numbers)}</div>
-        <div id="conn-graph-b"></div>
-      </div>
+      <div id="conn-composite" class="composite-graph"></div>
+      <div id="conn-detail" class="gate-detail hidden"></div>
     </div>
+
+    <details class="composite-individuals">
+      <summary>See each chart on its own</summary>
+      <div class="connection-graphs">
+        <div class="connection-graph">
+          <div class="connection-graph-name">${esc(nameA)}</div>
+          <div class="connection-graph-type">${esc(a.chart.type.name)} ${esc(a.chart.profile.numbers)}</div>
+          <div id="conn-graph-a"></div>
+        </div>
+        <div class="connection-graph">
+          <div class="connection-graph-name">${esc(nameB)}</div>
+          <div class="connection-graph-type">${esc(b.chart.type.name)} ${esc(b.chart.profile.numbers)}</div>
+          <div id="conn-graph-b"></div>
+        </div>
+      </div>
+    </details>
 
     <div class="conn-dynamic">
       <div class="panel-title">${esc(ti.dynamic)}</div>
@@ -189,6 +231,82 @@ function renderConnectionContent(comparison, a, b) {
     <p>${esc(comparison.summary)}</p>
   `;
 
-  renderBodygraph(document.getElementById('conn-graph-a'), a.chart, { compact: true });
-  renderBodygraph(document.getElementById('conn-graph-b'), b.chart, { compact: true });
+  // The hero: one combined bodygraph, colored by who brings each gate. Detail
+  // handlers below close over `api` (assigned right after the graph renders).
+  let api;
+  const detail = container.querySelector('#conn-detail');
+  const whoName = (owner) => owner === 'both' ? `${nameA} + ${nameB}`
+    : owner === 'a' ? nameA : owner === 'b' ? nameB : 'Neither of you';
+
+  function closeBtn() {
+    detail.querySelector('.gate-detail-close')?.addEventListener('click', () => {
+      detail.classList.add('hidden');
+      api?.setPinned?.(null);
+    });
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    detail.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' });
+  }
+
+  function showCompositeGate(g) {
+    const gate = GATES[g];
+    const owner = api.gateOwner(g);
+    const rows = CHANNELS.filter(ch => ch.gates.includes(g)).map(ch => {
+      const dyn = api.channelDynamic(ch);
+      if (!dyn) return '';
+      const other = ch.gates.find(x => x !== g);
+      const bring = (gn, ow) => `${esc(whoName(ow))} ${ow === 'both' ? 'both bring' : 'brings'} ${gn}`;
+      return `
+        <div class="conn-detail-channel ${dyn}">
+          <div class="cdc-dyn">${DYN_LABEL[dyn]}</div>
+          <div class="cdc-name">${esc(ch.name)} <span class="conn-gates">(${ch.gates.join('–')})</span></div>
+          <div class="cdc-bring">${bring(g, owner)} · ${bring(other, api.gateOwner(other))}</div>
+          <div class="cdc-blurb">${DYN_BLURB[dyn]}</div>
+        </div>`;
+    }).filter(Boolean).join('');
+    detail.innerHTML = `
+      <div class="gate-detail-card" data-gate="${g}">
+        <button class="gate-detail-close" title="Close">&times;</button>
+        <div class="panel-title">Gate ${g}${gate?.name ? ' — ' + esc(gate.name) : ''}</div>
+        <div class="conn-detail-who">Carried by <strong>${esc(whoName(owner))}</strong></div>
+        ${rows || '<p class="gate-detail-inactive">This gate doesn’t complete a channel between you.</p>'}
+      </div>`;
+    detail.classList.remove('hidden');
+    api.setPinned?.({ kind: 'gate', id: g });
+    closeBtn();
+  }
+
+  function showCompositeCenter(key) {
+    const owner = api.centerOwner(key);
+    const dn = CENTER_DISPLAY[key] || key;
+    const tag = owner === 'both' ? 'Both define' : owner === 'a' ? `${nameA} defines`
+      : owner === 'b' ? `${nameB} defines` : owner === 'bridged' ? 'Made together' : 'Open between you';
+    const txt = owner === 'both' ? `You both define ${dn} — fixed, reliable common ground between you.`
+      : owner === 'a' ? `${nameA} defines ${dn}; ${nameB} takes it in. ${nameA} steadily conditions ${nameB} here — a consistent, often unspoken influence.`
+      : owner === 'b' ? `${nameB} defines ${dn}; ${nameA} takes it in. ${nameB} steadily conditions ${nameA} here — a consistent, often unspoken influence.`
+      : owner === 'bridged' ? `Neither of you defines ${dn} alone — but together your gates complete a channel into it. You generate this energy only as a pair.`
+      : `${dn} stays open between you — you both amplify whatever’s in the room here. Watch for shared not-self patterns.`;
+    detail.innerHTML = `
+      <div class="gate-detail-card center-detail-card" data-center="${key}">
+        <button class="gate-detail-close" title="Close">&times;</button>
+        <div class="panel-title">${esc(dn)} Center</div>
+        <div class="center-detail-head"><span class="conn-center-tag ${owner || 'open'}">${esc(tag)}</span></div>
+        <p class="gate-detail-desc">${esc(txt)}</p>
+      </div>`;
+    detail.classList.remove('hidden');
+    api.setPinned?.({ kind: 'center', id: key });
+    closeBtn();
+  }
+
+  api = renderBodygraph(container.querySelector('#conn-composite'), a.chart, {
+    composite: {
+      chartA: a.chart, chartB: b.chart,
+      colorA: cpal.a, colorB: cpal.b, colorBridged: cpal.bridged,
+      labelA: nameA, labelB: nameB
+    },
+    onGateClick: showCompositeGate,
+    onCenterClick: showCompositeCenter
+  });
+
+  renderBodygraph(container.querySelector('#conn-graph-a'), a.chart, { compact: true });
+  renderBodygraph(container.querySelector('#conn-graph-b'), b.chart, { compact: true });
 }

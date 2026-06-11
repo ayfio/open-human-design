@@ -113,13 +113,18 @@ function palette() {
  */
 export function renderBodygraph(container, chart, opts = {}) {
   const interactive = !opts.compact;
-  const showColumns = !opts.compact && opts.planetColumns !== false;
+  const showColumns = !opts.compact && opts.planetColumns !== false && !opts.composite;
   const animate = opts.animate !== false && !opts.compact;
   container.innerHTML = '';
   container.classList.add('bg-root');
   if (opts.compact) container.classList.add('bg-compact');
 
   const colors = palette();
+
+  // Composite (two-person) overlay: color the body by WHO brings each gate,
+  // instead of by personality/design. The half-channel model makes this read
+  // beautifully — a two-tone channel is an electromagnetic bond.
+  const composite = opts.composite || null;
 
   const personalityGates = new Map(); // gate -> [{planet, line}]
   const designGates = new Map();
@@ -128,16 +133,64 @@ export function renderBodygraph(container, chart, opts = {}) {
     if (!map.has(g.gate)) map.set(g.gate, []);
     map.get(g.gate).push({ planet, line: g.line });
   };
-  for (const [planet, g] of Object.entries(chart.gates?.personality || {})) addActivation(personalityGates, planet, g);
-  for (const [planet, g] of Object.entries(chart.gates?.design || {})) addActivation(designGates, planet, g);
-  const activeGates = new Set([...personalityGates.keys(), ...designGates.keys()]);
-  const definedCenters = new Set(chart.centers?.definedNames || []);
-  const definedChannelKeys = new Set((chart.channels || []).map(ch => ch.gates.join('-')));
+  if (!composite) {
+    for (const [planet, g] of Object.entries(chart.gates?.personality || {})) addActivation(personalityGates, planet, g);
+    for (const [planet, g] of Object.entries(chart.gates?.design || {})) addActivation(designGates, planet, g);
+  }
+
+  let aGates = null, bGates = null, gateOwner = null, centerOwner = null, channelDynamic = null;
+  if (composite) {
+    aGates = new Set(composite.chartA.gates.all);
+    bGates = new Set(composite.chartB.gates.all);
+    gateOwner = (g) => { const a = aGates.has(g), b = bGates.has(g); return a && b ? 'both' : a ? 'a' : b ? 'b' : null; };
+  }
+
+  const activeGates = composite
+    ? new Set([...aGates, ...bGates])
+    : new Set([...personalityGates.keys(), ...designGates.keys()]);
+
+  // Channels present across the relationship (both gates appear in either chart).
+  const compChannels = composite
+    ? CHANNELS.filter(ch => activeGates.has(ch.gates[0]) && activeGates.has(ch.gates[1]))
+    : null;
+  const definedChannelKeys = composite
+    ? new Set(compChannels.map(ch => ch.gates.join('-')))
+    : new Set((chart.channels || []).map(ch => ch.gates.join('-')));
+
+  let definedCenters;
+  if (composite) {
+    const compCenters = new Set();
+    for (const ch of compChannels) for (const c of (ch.centers || [])) compCenters.add(c);
+    definedCenters = compCenters;
+    const aDef = new Set(composite.chartA.centers.definedNames);
+    const bDef = new Set(composite.chartB.centers.definedNames);
+    centerOwner = (key) => {
+      if (!compCenters.has(key)) return null;
+      const a = aDef.has(key), b = bDef.has(key);
+      if (a && b) return 'both';
+      if (a) return 'a';
+      if (b) return 'b';
+      return 'bridged'; // completed together — neither has it alone
+    };
+    channelDynamic = (ch) => {
+      const [g1, g2] = ch.gates;
+      const a1 = aGates.has(g1), a2 = aGates.has(g2), b1 = bGates.has(g1), b2 = bGates.has(g2);
+      const aFull = a1 && a2, bFull = b1 && b2;
+      if (aFull && bFull) return 'companionship';
+      if (aFull || bFull) return (aFull ? (b1 || b2) : (a1 || a2)) ? 'compromise' : 'dominance';
+      if ((a1 && b2) || (a2 && b1)) return 'electromagnetic';
+      return null;
+    };
+  } else {
+    definedCenters = new Set(chart.centers?.definedNames || []);
+  }
   const transitGates = new Set(opts.transitGates || []);
 
   // ---------- SVG ----------
   const pad = 16;
-  const chartSummary = [
+  const chartSummary = composite
+    ? `Combined Human Design bodygraph for ${composite.labelA} and ${composite.labelB}, colored by who carries each gate and channel.`
+    : [
     `Human Design bodygraph.`,
     chart.type?.name ? `Type: ${chart.type.name}.` : '',
     chart.profile?.numbers ? `Profile ${chart.profile.numbers}.` : '',
@@ -178,21 +231,60 @@ export function renderBodygraph(container, chart, opts = {}) {
     return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
   };
   const coreAmt = isDark() ? 0.13 : 0.17;
-  for (const [key, color] of Object.entries(centerColors())) {
-    const grad = svgEl('radialGradient', { id: `bg-cg-${key}`, cx: '0.5', cy: '0.36', r: '0.78' });
-    grad.appendChild(svgEl('stop', { offset: '0', 'stop-color': lighten(color, coreAmt) }));
-    grad.appendChild(svgEl('stop', { offset: '1', 'stop-color': color }));
-    defs.appendChild(grad);
+  if (!composite) {
+    for (const [key, color] of Object.entries(centerColors())) {
+      const grad = svgEl('radialGradient', { id: `bg-cg-${key}`, cx: '0.5', cy: '0.36', r: '0.78' });
+      grad.appendChild(svgEl('stop', { offset: '0', 'stop-color': lighten(color, coreAmt) }));
+      grad.appendChild(svgEl('stop', { offset: '1', 'stop-color': color }));
+      defs.appendChild(grad);
+    }
+  } else {
+    // Person colors + a "together" hue for centers neither defines alone.
+    const colA = composite.colorA, colB = composite.colorB;
+    const colBridged = composite.colorBridged;
+    // Two-tone stripe for gates both people carry (companionship at gate level).
+    const ab = svgEl('pattern', { id: 'bg-stripe-ab', width: '8', height: '8', patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' });
+    ab.appendChild(svgEl('rect', { width: '8', height: '8', fill: colA }));
+    ab.appendChild(svgEl('rect', { width: '4', height: '8', fill: colB }));
+    defs.appendChild(ab);
+    const radial = (id, color) => {
+      const grad = svgEl('radialGradient', { id, cx: '0.5', cy: '0.36', r: '0.78' });
+      grad.appendChild(svgEl('stop', { offset: '0', 'stop-color': lighten(color, coreAmt) }));
+      grad.appendChild(svgEl('stop', { offset: '1', 'stop-color': color }));
+      defs.appendChild(grad);
+    };
+    radial('bg-cc-a', colA);
+    radial('bg-cc-b', colB);
+    radial('bg-cc-bridged', colBridged);
+    // Both define it → a diagonal blend from one person's hue to the other's.
+    const both = svgEl('linearGradient', { id: 'bg-cc-both', x1: '0', y1: '0', x2: '1', y2: '1' });
+    both.appendChild(svgEl('stop', { offset: '0', 'stop-color': colA }));
+    both.appendChild(svgEl('stop', { offset: '1', 'stop-color': colB }));
+    defs.appendChild(both);
   }
   svg.appendChild(defs);
 
   const gateFill = (gateNum) => {
+    if (composite) {
+      const o = gateOwner(gateNum);
+      if (o === 'both') return 'url(#bg-stripe-ab)';
+      if (o === 'a') return composite.colorA;
+      if (o === 'b') return composite.colorB;
+      return colors.inactive;
+    }
     const p = personalityGates.has(gateNum);
     const d = designGates.has(gateNum);
     if (p && d) return 'url(#bg-stripe-both)';
     if (p) return colors.personality;
     if (d) return colors.design;
     return colors.inactive;
+  };
+  const centerFill = (key, defined) => {
+    if (composite) {
+      const o = centerOwner(key);
+      return o ? `url(#bg-cc-${o})` : colors.undefinedCenter;
+    }
+    return defined ? `url(#bg-cg-${key})` : colors.undefinedCenter;
   };
 
   // --- Channel paths (one per gate = half-channel) ---
@@ -224,7 +316,7 @@ export function renderBodygraph(container, chart, opts = {}) {
     const defined = definedCenters.has(centerKey);
     const path = svgEl('path', {
       d: shapeData.path,
-      fill: defined ? `url(#bg-cg-${centerKey})` : colors.undefinedCenter,
+      fill: centerFill(centerKey, defined),
       stroke: defined ? 'none' : colors.centerStroke,
       'stroke-width': '1.5',
       'data-center': centerKey,
@@ -368,6 +460,7 @@ export function renderBodygraph(container, chart, opts = {}) {
     tooltip.style.display = 'none';
 
     function tooltipText(gateNum) {
+      if (composite) return compositeGateTooltip(gateNum);
       const gate = GATES[gateNum];
       const acts = [];
       for (const { planet, line } of designGates.get(gateNum) || []) {
@@ -387,11 +480,33 @@ export function renderBodygraph(container, chart, opts = {}) {
 
     function centerTooltipText(centerKey) {
       const dn = CENTER_DISPLAY[centerKey] || centerKey;
+      if (composite) {
+        const o = centerOwner(centerKey);
+        const txt = o === 'both' ? 'Both of you define this'
+          : o === 'a' ? `${composite.labelA} defines this`
+          : o === 'b' ? `${composite.labelB} defines this`
+          : o === 'bridged' ? 'Defined together — neither of you has it alone'
+          : 'Open between you';
+        return `<strong>${dn} Center</strong><div class="bg-tt-channel">${txt}</div>`;
+      }
       const defined = definedCenters.has(centerKey);
       const count = [...activeGates].filter(g => GATES[g]?.center === centerKey).length;
       return `<strong>${dn} Center</strong>` +
         `<div class="bg-tt-channel">${defined ? 'Defined — consistent energy you radiate' : 'Open — you take this energy in'}` +
         (count ? ` · ${count} active gate${count === 1 ? '' : 's'}` : '') + `</div>`;
+    }
+
+    function compositeGateTooltip(g) {
+      const gate = GATES[g];
+      const o = gateOwner(g);
+      const who = o === 'both' ? `${composite.labelA} + ${composite.labelB}`
+        : o === 'a' ? composite.labelA : o === 'b' ? composite.labelB : 'Neither of you';
+      const dyn = (GATE_CHANNELS[g] || [])
+        .map(ch => { const d = channelDynamic(ch); return d ? `${d} · ${ch.name} (${ch.gates.join('-')})` : null; })
+        .filter(Boolean);
+      return `<strong>Gate ${g} — ${gate?.name || ''}</strong>` +
+        `<div class="bg-tt-acts">${who}</div>` +
+        (dyn.length ? `<div class="bg-tt-channel">${dyn.join('<br>')}</div>` : '');
     }
 
     function moveTooltip(evt) {
@@ -496,7 +611,9 @@ export function renderBodygraph(container, chart, opts = {}) {
     container.appendChild(svg);
   }
 
-  return { highlightGate, highlightCenter, setPinned };
+  const api = { highlightGate, highlightCenter, setPinned };
+  if (composite) Object.assign(api, { gateOwner, centerOwner, channelDynamic });
+  return api;
 }
 
 export default renderBodygraph;
