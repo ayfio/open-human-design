@@ -724,6 +724,30 @@ body {
   color: var(--text-secondary);
   margin-top: 4px;
 }
+.conn-channel .conn-gates { font-weight: 400; color: var(--text-tertiary); font-size: 13px; }
+
+/* Fleshed-out comparison sections */
+.conn-dynamic {
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 4px 0 20px;
+}
+.conn-dynamic-sub { font-size: 13px; color: var(--text-tertiary); margin: 2px 0 10px; }
+.conn-dynamic p { font-size: 13.5px; margin: 6px 0; }
+.conn-section { margin-bottom: 18px; }
+.conn-section-head { display: flex; align-items: center; gap: 8px; }
+.conn-count {
+  font-size: 12px; font-weight: 600; color: var(--text-tertiary);
+  background: var(--bg-sunken); border-radius: 999px; padding: 1px 9px;
+}
+.conn-empty { font-size: 13px; color: var(--text-tertiary); font-style: italic; padding: 2px 0 4px; }
+.conn-center {
+  font-size: 13.5px; padding: 7px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.conn-center:last-of-type { border-bottom: none; }
+.conn-center-theme { color: var(--text-tertiary); font-size: 12.5px; }
+.conn-note { font-size: 13px; color: var(--text-secondary); margin: 8px 0 0; }
 
 /* =============================================
    Team View

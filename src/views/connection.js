@@ -86,59 +86,106 @@ function runComparison() {
   renderConnectionContent(comparison, current, b);
 }
 
+// The four ways two charts share channels — explained, with the circuit each
+// connection runs through (individual / tribal / collective / integration).
+const CONN_TYPES = [
+  ['electromagnetic', 'Electromagnetic', 'var(--electromagnetic)',
+    'Each of you carries one half of a channel — together you complete it, generating energy neither has alone. This is the spark of attraction, and the friction that rides along with it.'],
+  ['companionship', 'Companionship', 'var(--integration)',
+    'You both already have the whole channel — shared, stable common ground where you simply “get” each other with no effort.'],
+  ['compromise', 'Compromise', 'var(--collective)',
+    'One of you has the full channel, the other only half of it. The full-channel person sets the tone here; the other gets drawn into their frequency — workable, but it asks for give and take.'],
+  ['dominance', 'Dominance', 'var(--text-tertiary)',
+    'One of you has the full channel and the other has nothing in it. That energy flows one way, consistently conditioning the open person — powerful, and worth being conscious of.']
+];
+
 function renderConnectionContent(comparison, a, b) {
   const container = document.getElementById('connection-content');
   const cc = comparison.connectionChart;
+  const nameA = a.birth.name || 'You';
+  const nameB = b.birth.name || 'Person B';
+  const ti = comparison.typeInteraction;
+  const ad = comparison.authorityDynamic;
+  const ph = comparison.profileHarmony;
+  const br = comparison.bridging;
+  const stats = comparison.stats || {};
 
-  const renderConnections = (items, label, blurb, color) => {
-    if (!items.length) return '';
+  const circuitBadge = (c) => c ? `<span class="circuit-badge ${esc(c)}">${esc(c)}</span>` : '';
+
+  const connSection = ([key, label, color, blurb]) => {
+    const items = cc.connections[key] || [];
     return `
-      <div style="margin-bottom:16px">
-        <div class="panel-title">${label} (${items.length})</div>
+      <div class="conn-section">
+        <div class="conn-section-head"><span class="panel-title">${label}</span><span class="conn-count">${items.length}</span></div>
         <p class="panel-intro">${blurb}</p>
-        ${items.map(c => `
+        ${items.length ? items.map(c => `
           <div class="connection-type" style="border-left:3px solid ${color}">
-            <div class="conn-channel">${esc(c.channel)} (${c.gates.join('-')})</div>
+            <div class="conn-channel">${esc(c.channel)} <span class="conn-gates">(${c.gates.join('–')})</span> ${circuitBadge(c.circuit)}</div>
             <div class="conn-desc">${esc(c.description)}</div>
-          </div>
-        `).join('')}
-      </div>
-    `;
+          </div>`).join('')
+        : `<div class="conn-empty">No ${label.toLowerCase()} channels between you.</div>`}
+      </div>`;
   };
+
+  // Center conditioning map — who steadily influences whom.
+  const cd = comparison.centerDynamics || [];
+  const conditioning = cd.filter(c => /Conditions/.test(c.dynamic)).map(c => {
+    const from = c.dynamic.startsWith('A') ? nameA : nameB;
+    const to = c.dynamic.startsWith('A') ? nameB : nameA;
+    return `<div class="conn-center"><strong>${esc(c.centerName)}</strong> — ${esc(from)} conditions ${esc(to)} <span class="conn-center-theme">${esc(c.theme)}</span></div>`;
+  });
+  const bothDefined = cd.filter(c => c.dynamic === 'Both Defined').map(c => c.centerName);
+  const bothOpen = cd.filter(c => c.dynamic === 'Both Open').map(c => c.centerName);
 
   container.innerHTML = `
     <div class="connection-graphs">
       <div class="connection-graph">
-        <div class="connection-graph-name">${esc(a.birth.name || 'You')}</div>
+        <div class="connection-graph-name">${esc(nameA)}</div>
         <div class="connection-graph-type">${esc(a.chart.type.name)} ${esc(a.chart.profile.numbers)}</div>
         <div id="conn-graph-a"></div>
       </div>
       <div class="connection-graph">
-        <div class="connection-graph-name">${esc(b.birth.name || 'Person B')}</div>
+        <div class="connection-graph-name">${esc(nameB)}</div>
         <div class="connection-graph-type">${esc(b.chart.type.name)} ${esc(b.chart.profile.numbers)}</div>
         <div id="conn-graph-b"></div>
       </div>
     </div>
 
-    <div class="foundation-grid" style="margin-bottom:20px">
-      <div class="foundation-item">
-        <div class="label">Composite Type</div>
-        <div class="value">${esc(cc.compositeType)}</div>
-        <div class="detail">${cc.compositeChannelCount} channels together</div>
-      </div>
-      <div class="foundation-item">
-        <div class="label">Type Dynamic</div>
-        <div class="value">${esc(comparison.typeInteraction.dynamic)}</div>
-        <div class="detail">${esc(comparison.typeInteraction.typeA)} + ${esc(comparison.typeInteraction.typeB)}</div>
-      </div>
+    <div class="conn-dynamic">
+      <div class="panel-title">${esc(ti.dynamic)}</div>
+      <div class="conn-dynamic-sub">${esc(ti.typeA)} + ${esc(ti.typeB)}</div>
+      <p><strong>Gifts</strong> · ${esc(ti.gifts)}</p>
+      <p><strong>Challenge</strong> · ${esc(ti.challenges)}</p>
+      <p><strong>Make it work</strong> · ${esc(ti.tips)}</p>
     </div>
 
-    ${renderConnections(cc.connections.electromagnetic, 'Electromagnetic', 'Each of you carries half the channel — together you create energy neither has alone. Attraction and friction both live here.', 'var(--electromagnetic)')}
-    ${renderConnections(cc.connections.companionship, 'Companionship', 'You both have the whole channel — shared, stable common ground.', 'var(--integration)')}
-    ${renderConnections(cc.connections.compromise, 'Compromise', 'One has the full channel, the other half of it — the full-channel side tends to dominate the theme.', 'var(--collective)')}
-    ${renderConnections(cc.connections.dominance, 'Dominance', 'One has the full channel, the other nothing — this energy conditions the open person one-way.', 'var(--text-tertiary)')}
+    <div class="foundation-grid" style="margin-bottom:8px">
+      <div class="foundation-item"><div class="label">Together you are</div><div class="value">${esc(cc.compositeType)}</div><div class="detail">${cc.compositeChannelCount} channels combined</div></div>
+      <div class="foundation-item"><div class="label">Attraction</div><div class="value">${stats.electromagneticCount ?? cc.connections.electromagnetic.length}</div><div class="detail">electromagnetic links</div></div>
+      <div class="foundation-item"><div class="label">Conditioning</div><div class="value">${stats.conditioningCenters ?? conditioning.length}</div><div class="detail">centers one shapes in the other</div></div>
+    </div>
 
-    <div class="panel-title">Summary</div>
+    <div class="panel-title" style="margin-top:22px">How you decide together</div>
+    <p class="panel-intro">${esc(ad.authorityA)} + ${esc(ad.authorityB)} — ${esc(ad.description)} ${ad.timing ? `<em>Timing: ${esc(ad.timing)}.</em>` : ''}</p>
+
+    <div class="panel-title">Profiles</div>
+    <p class="panel-intro">${esc(ph.nameA)} (${esc(ph.profileA)}) + ${esc(ph.nameB)} (${esc(ph.profileB)}) — ${esc(ph.description)}</p>
+
+    <div class="panel-title" style="margin-top:22px">The four ways your channels connect</div>
+    ${CONN_TYPES.map(connSection).join('')}
+
+    <div class="panel-title" style="margin-top:22px">Your centers together</div>
+    <p class="panel-intro">Where one of you is defined and the other open, the defined person steadily conditions the open one — a consistent, often unspoken influence.</p>
+    ${conditioning.length ? conditioning.join('') : '<div class="conn-empty">Neither of you conditions the other’s centers — an unusually independent pairing.</div>'}
+    ${bothDefined.length ? `<p class="conn-note"><strong>Both defined:</strong> ${bothDefined.map(esc).join(', ')} — consistent, fixed common ground.</p>` : ''}
+    ${bothOpen.length ? `<p class="conn-note"><strong>Both open:</strong> ${bothOpen.map(esc).join(', ')} — you amplify each other (and the room) here; watch for shared not-self patterns.</p>` : ''}
+
+    ${br?.bridgedChannels?.length ? `
+      <div class="panel-title" style="margin-top:22px">What you create together</div>
+      <p class="panel-intro">${esc(br.description)}</p>
+      <div class="pills">${br.bridgedChannels.map(c => `<span class="pill">${esc(c.channel)} · ${esc(c.theme)}</span>`).join('')}</div>` : ''}
+
+    <div class="panel-title" style="margin-top:22px">In a nutshell</div>
     <p>${esc(comparison.summary)}</p>
   `;
 

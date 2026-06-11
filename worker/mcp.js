@@ -483,7 +483,7 @@ const TOOLS = [
   },
   {
     name: 'compare_charts',
-    description: 'Human Design connection analysis between two people: electromagnetic (attraction — each has half a channel), companionship (both whole), compromise and dominance channels, composite type, and a relationship summary.',
+    description: 'Full Human Design connection analysis between two people: the type dynamic (gifts/challenge/how to make it work), how their authorities decide together, profile harmony, the four channel connections each tagged with its circuit — electromagnetic (attraction, each has half), companionship (both whole, common ground), compromise (one full/one half), dominance (one full/one empty) — the center-conditioning map (who steadily shapes whom), what they bridge into being together, composite type, and a summary.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -498,16 +498,30 @@ const TOOLS = [
       const chartB = calculateHumanDesign(b.birthDate, b.birthHour, b.utcOffset);
       const cmp = compareHumanDesign(chartA, chartB);
       const cc = cmp.connectionChart;
-      const connList = (items) => items.map(c => ({ channel: `${c.channel} (${c.gates.join('-')})`, meaning: c.description }));
+      const connList = (items) => items.map(c => ({ channel: `${c.channel} (${c.gates.join('-')})`, circuit: c.circuit, meaning: c.description }));
+      const ti = cmp.typeInteraction || {}, ad = cmp.authorityDynamic || {}, ph = cmp.profileHarmony || {};
+      const conditioning = (cmp.centerDynamics || [])
+        .filter(c => /Conditions/.test(c.dynamic))
+        .map(c => ({
+          center: c.centerName,
+          direction: c.dynamic === 'A Conditions B' ? 'personA conditions personB'
+            : c.dynamic === 'B Conditions A' ? 'personB conditions personA' : c.dynamic,
+          note: c.description
+        }));
       return json({
         personA: { ...birthMeta(a), type: chartA.type.name, profile: chartA.profile.numbers, authority: chartA.authority.name },
         personB: { ...birthMeta(b), type: chartB.type.name, profile: chartB.profile.numbers, authority: chartB.authority.name },
         compositeType: cc.compositeType,
-        typeDynamic: cmp.typeInteraction?.dynamic,
+        typeDynamic: ti.dynamic,
+        dynamic: { gifts: ti.gifts, challenge: ti.challenges, makeItWork: ti.tips },
+        decisionMaking: { authorities: `${ad.authorityA} + ${ad.authorityB}`, timing: ad.timing, note: ad.description },
+        profiles: { combo: `${ph.profileA} ${ph.nameA} + ${ph.profileB} ${ph.nameB}`, harmony: ph.harmony, note: ph.description },
         electromagnetic: connList(cc.connections.electromagnetic),
         companionship: connList(cc.connections.companionship),
         compromise: connList(cc.connections.compromise),
         dominance: connList(cc.connections.dominance),
+        centerConditioning: conditioning,
+        createTogether: cmp.bridging ? { note: cmp.bridging.description, channels: (cmp.bridging.bridgedChannels || []).map(x => `${x.channel} (${x.theme})`) } : undefined,
         summary: cmp.summary
       });
     }

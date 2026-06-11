@@ -118,7 +118,7 @@ await check('connection compare works (place search resolves tz)', async () => {
   await page.click('#conn-calculate');
   await page.waitForSelector('#connection-content .foundation-item', { timeout: 5000 });
   const content = await page.textContent('#connection-content');
-  if (!/Composite Type/.test(content)) throw new Error(content.slice(0, 120));
+  if (!/How you decide together/.test(content)) throw new Error(content.slice(0, 120));
 });
 
 // --- Team using manual rows with place search ---
@@ -205,7 +205,7 @@ await check('connection invite auto-runs the comparison (dyad loop)', async () =
   await p3.click('#birth-form button[type=submit]');
   await p3.waitForSelector('#connection-content .foundation-item', { timeout: 6000 });
   const content = await p3.textContent('#connection-content');
-  if (!/Composite Type/.test(content)) throw new Error('comparison not shown: ' + content.slice(0, 120));
+  if (!/How you decide together/.test(content)) throw new Error('comparison not shown: ' + content.slice(0, 120));
   await ctx.close();
 });
 

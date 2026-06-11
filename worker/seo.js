@@ -9,7 +9,7 @@
  */
 
 import {
-  TYPES, PROFILES, AUTHORITIES, CENTERS, GATES,
+  TYPES, PROFILES, AUTHORITIES, CENTERS, GATES, CHANNELS, CIRCUIT_GROUPS,
   GATE_DESCRIPTIONS, LINE_DESCRIPTIONS, CHANNEL_DESCRIPTIONS,
   calculateHumanDesign
 } from 'natalengine';
@@ -63,6 +63,16 @@ const CHANNELS_FOR_GATE = (g) => Object.keys(CHANNEL_DESCRIPTIONS)
 const GATES_IN_CENTER = (c) => Object.entries(GATES)
   .filter(([, v]) => v.center === c).map(([g]) => +g).sort((a, b) => a - b);
 const CENTER_NAME = (c) => CENTERS[c]?.name || c;
+
+// Original circuit descriptions (the engine's keywords are terse).
+const CIRCUIT_ORDER = ['individual', 'tribal', 'collective', 'integration'];
+const CIRCUIT_DESC = {
+  individual: 'The Individual circuit is the energy of mutation and uniqueness — the drive to be yourself, follow your own knowing, and bring something genuinely new into the world. It empowers through difference, and its melancholy is the doorway to creative breakthrough. This is the current of the artist, the rebel, the one who can\'t help being authentic; it moves in pulses, not on demand.',
+  tribal: 'The Tribal circuit is the energy of support, family and resources — bargains, loyalty, and taking care of your own. It builds and sustains community through agreements and material security. Its concern is survival and continuity: who is provided for, who can be relied on, and what is promised. Tribal energy is emotional and touch-based, felt rather than reasoned.',
+  collective: 'The Collective circuit is the energy of sharing — patterns, logic and experience offered to all of humanity. It runs in two streams: the Logic stream, which tests what works and builds reliable, repeatable systems, and the Sensing (abstract) stream, which makes meaning out of lived experience. This is how humanity learns, plans and evolves together.',
+  integration: 'The Integration circuit is the energy of self-empowerment and survival — a tight cluster of channels linking the Self, Throat, Spleen and Sacral, focused on the individual thriving in the moment. It is the most self-referential current in the design: spontaneous, instinctive and quick, here to empower the self first so that it can then empower the collective.'
+};
+const CHANNELS_IN_CIRCUIT = (c) => CHANNELS.filter(ch => ch.circuit === c);
 
 // --- shared page shell ----------------------------------------------------
 function shell({ title, description, path, h1, kicker, body, breadcrumb }) {
@@ -381,18 +391,79 @@ function celebrityIndexPage() {
   });
 }
 
+function circuitPage(slug) {
+  const cg = CIRCUIT_GROUPS[slug];
+  if (!cg || !CIRCUIT_DESC[slug]) return null;
+  const channels = CHANNELS_IN_CIRCUIT(slug);
+  const others = CIRCUIT_ORDER.filter(k => k !== slug);
+  const body = `
+    <p class="lede">${esc(CIRCUIT_DESC[slug])}</p>
+    <div class="factrow">
+      <span><b>Theme</b> ${esc(cg.theme)}</span>
+      <span><b>Keynotes</b> ${esc(cg.keywords)}</span>
+      <span><b>Channels</b> ${channels.length}</span>
+    </div>
+    <h2>Channels in the ${esc(cg.name)} circuit</h2>
+    <div class="grid">${channels.map(ch => `<a href="/channel/${ch.gates.join('-')}">${ch.gates.join('-')} · ${esc(ch.name)}</a>`).join('')}</div>
+    <h2>The four circuits</h2>
+    <div class="grid">${others.map(k => `<a href="/circuit/${k}">${esc(CIRCUIT_GROUPS[k].name)}</a>`).join('')}</div>
+    <p style="margin-top:14px">Circuits shape how energy connects between two people — see <a href="/compatibility">Human Design compatibility</a>.</p>`;
+  return shell({
+    title: `The ${cg.name} Circuit in Human Design — meaning & channels`,
+    description: `The ${cg.name} circuit (${cg.theme}): what it means, its keynotes, and the ${channels.length} channels that run through it — free.`,
+    path: `/circuit/${slug}`,
+    h1: `The ${cg.name} Circuit`,
+    kicker: esc(cg.theme),
+    breadcrumb: `<a href="/human-design">Human Design</a> › <a href="/human-design#circuits">Circuits</a> › ${esc(cg.name)}`,
+    body
+  });
+}
+
+function compatibilityPage() {
+  const types = [
+    ['Electromagnetic', 'Each person carries one half of a channel — together they complete it, generating energy neither has alone. This is the spark of attraction, and the friction that rides along with it.'],
+    ['Companionship', 'Both people already have the whole channel — shared, stable common ground where they simply understand each other with no effort.'],
+    ['Compromise', 'One person has the full channel, the other only half of it. The full-channel person sets the tone; the other is drawn into their frequency — workable, but it asks for give and take.'],
+    ['Dominance', 'One person has the full channel and the other has nothing in it. That energy flows one way, consistently conditioning the open person.']
+  ];
+  const body = `
+    <p class="lede">A Human Design connection chart overlays two bodygraphs and reads how their energies meet — the channels you complete together, the centers you condition in each other, and the way your types and authorities make decisions side by side.</p>
+    <h2>The four ways two charts connect</h2>
+    ${types.map(([name, txt]) => `<div class="card line"><h3>${name}</h3><p>${esc(txt)}</p></div>`).join('')}
+    <h2>Center conditioning</h2>
+    <p>Where one person has a defined center and the other has it open, the defined person steadily conditions the open one — a consistent, often unspoken influence. Centers open in both amplify together; centers defined in both are fixed common ground.</p>
+    <h2>Circuits</h2>
+    <p>Every connecting channel runs through a circuit, which colours what the connection is about: <a href="/circuit/individual">Individual</a> (mutation, uniqueness), <a href="/circuit/tribal">Tribal</a> (support, resources), <a href="/circuit/collective">Collective</a> (sharing, logic), and <a href="/circuit/integration">Integration</a> (self-empowerment).</p>
+    <div class="cta" style="margin:18px 0">
+      <strong>See your own connection chart</strong>
+      <div>Compare your design with anyone — partner, friend, family — free, in seconds.</div>
+      <a href="/">Calculate your chart, then compare</a>
+    </div>`;
+  return shell({
+    title: 'Human Design Compatibility & Connection Charts — how to read them',
+    description: 'How Human Design connection charts work: electromagnetic, companionship, compromise and dominance channels, center conditioning, and circuits. Compare any two charts free.',
+    path: '/compatibility',
+    h1: 'Human Design Compatibility',
+    kicker: 'How two designs meet — connection charts explained',
+    breadcrumb: `<a href="/human-design">Human Design</a> › Compatibility`,
+    body
+  });
+}
+
 function hubPage() {
   const types = Object.keys(TYPES).map(k => `<a href="/type/${TYPE_SLUG_OF[k]}">${esc(TYPES[k].name)}</a>`).join('');
   const centers = CENTER_ORDER.map(c => `<a href="/center/${c}">${esc(CENTER_NAME(c))}</a>`).join('');
   const profiles = PROFILE_KEYS.map(k => `<a href="/profile/${profileSlug(k)}">${k} ${esc(PROFILES[k].name)}</a>`).join('');
   const gates = Array.from({ length: 64 }, (_, i) => i + 1).map(g => `<a href="/gate/${g}">${g}</a>`).join('');
   const channels = Object.keys(CHANNEL_DESCRIPTIONS).sort().map(k => `<a href="/channel/${k}">${k}</a>`).join('');
+  const circuits = CIRCUIT_ORDER.map(c => `<a href="/circuit/${c}">${esc(CIRCUIT_GROUPS[c].name)}</a>`).join('');
   const body = `
-    <p class="lede">A free, open reference to the Human Design system — every type, center, profile, gate and channel, with original interpretations and all 384 line meanings. Then compute your own chart in seconds.</p>
-    <p><a href="/celebrity">Browse Human Design charts for ${CELEBRITIES.length} well-known people →</a></p>
+    <p class="lede">A free, open reference to the Human Design system — every type, center, profile, gate, channel and circuit, with original interpretations and all 384 line meanings. Then compute your own chart in seconds.</p>
+    <p><a href="/celebrity">Browse charts for ${CELEBRITIES.length} well-known people →</a> · <a href="/compatibility">How compatibility &amp; connection charts work →</a></p>
     <h2 id="types">The five types</h2><div class="grid">${types}</div>
     <h2 id="centers">The nine centers</h2><div class="grid">${centers}</div>
     <h2 id="profiles">The twelve profiles</h2><div class="grid">${profiles}</div>
+    <h2 id="circuits">The four circuits</h2><div class="grid">${circuits}</div>
     <h2 id="gates">The 64 gates</h2><div class="grid">${gates}</div>
     <h2 id="channels">The 36 channels</h2><div class="grid">${channels}</div>`;
   return shell({
@@ -411,8 +482,10 @@ export async function handleSeoPage(request) {
   const p = url.pathname.replace(/\/$/, '') || '/';
   let html = null, m;
   if (p === '/human-design') html = hubPage();
+  else if (p === '/compatibility') html = compatibilityPage();
   else if (p === '/celebrity') html = celebrityIndexPage();
   else if ((m = p.match(/^\/celebrity\/([a-z0-9-]+)$/))) html = celebrityPage(m[1]);
+  else if ((m = p.match(/^\/circuit\/([a-z]+)$/))) html = circuitPage(m[1]);
   else if ((m = p.match(/^\/gate\/(\d{1,2})$/))) html = gatePage(+m[1]);
   else if ((m = p.match(/^\/type\/([a-z-]+)$/))) html = typePage(m[1]);
   else if ((m = p.match(/^\/center\/([a-z]+)$/))) html = centerPage(m[1]);
@@ -431,9 +504,10 @@ export async function handleSeoPage(request) {
 
 export function handleSitemap() {
   const urls = [
-    '/', '/human-design', '/celebrity',
+    '/', '/human-design', '/celebrity', '/compatibility',
     ...Object.keys(TYPES).map(k => `/type/${TYPE_SLUG_OF[k]}`),
     ...CENTER_ORDER.map(c => `/center/${c}`),
+    ...CIRCUIT_ORDER.map(c => `/circuit/${c}`),
     ...PROFILE_KEYS.map(k => `/profile/${profileSlug(k)}`),
     ...Array.from({ length: 64 }, (_, i) => `/gate/${i + 1}`),
     ...Object.keys(CHANNEL_DESCRIPTIONS).map(k => `/channel/${k}`),
