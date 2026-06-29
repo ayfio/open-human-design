@@ -1,49 +1,37 @@
 {
-  // Open Human Design — one Worker serves the SPA + the remote MCP server.
-  // Local dev:  npm run build && npx wrangler dev
-  // Deploy:     npx wrangler deploy   (requires `wrangler login` once)
   "name": "open-human-design",
   "main": "worker/index.js",
-  "compatibility_date": "2026-05-01",
+  "compatibility_date": "2024-06-01",
   "compatibility_flags": ["nodejs_compat"],
+  
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    // CRITICAL: browser navigations (Sec-Fetch-Mode: navigate) to unknown
-    // paths get index.html BEFORE the Worker runs unless listed here —
-    // without this, magic-link verify and OAuth consent serve the SPA
-    // shell and the whole account/AI feature is dead in real browsers
-    // (curl tests pass because they don't send navigation headers).
-    "run_worker_first": ["/", "/og/*", "/chart.svg", "/api/*", "/auth/*", "/authorize", "/oauth/*", "/mcp", "/.well-known/*", "/human-design", "/compatibility", "/celebrity", "/celebrity/*", "/circuit/*", "/gate/*", "/type/*", "/center/*", "/channel/*", "/profile/*", "/sitemap.xml", "/robots.txt"]
+    "run_worker_first": [
+      "/api/*", "/auth/*", "/oauth/*", "/mcp",
+      "/.well-known/*", "/og/*", "/chart.svg"
+    ]
   },
+  
   "workers_dev": true,
-  "routes": [
-    { "pattern": "openhumandesign.com", "custom_domain": true },
-    { "pattern": "www.openhumandesign.com", "custom_domain": true }
-  ],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "open-human-design",
-      "database_id": "506217ad-e026-403e-bf0a-06d42b609eee"
-    }
-  ],
-  "kv_namespaces": [
-    {
-      "binding": "OAUTH_KV",
-      "id": "54cc7860d42848609d72e57119b45e48"
-    }
-  ],
-  "send_email": [
-    {
-      "name": "SEND_EMAIL"
-    }
-  ],
-  "rules": [
-    { "type": "Data", "globs": ["**/*.ttf"], "fallthrough": true }
-  ],
-  "observability": {
-    "enabled": true
-  }
+  
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "open-hd",
+    "database_id": "e2175d43-d060-4ddf-b926-59ce70774da8"
+  }],
+  
+  "kv_namespaces": [{
+    "binding": "OAUTH_KV",
+    "id": "ba46c0fc03a54b10af60fa38e73fda48"
+  }],
+  
+  "send_email": [{ "name": "SEND_EMAIL" }],
+  
+  "rules": [{ "type": "Data", "globs": ["**/*.ttf", "**/*.woff", "**/*.woff2"], "fallthrough": true }],
+  
+  "observability": { "enabled": true },
+  
+  "limits": { "cpu_ms": 50 }
 }
