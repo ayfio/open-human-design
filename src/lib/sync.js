@@ -1,7 +1,295 @@
 /**
  * Optional account sync — the SyncStore side of the PeopleStore seam.
  *
- * Design (docs/PLATFORM.md):
+ * Design (docs/PLATFORM.md):/**
+ * Cloudflare Worker Sync — PeopleStore synchronization layer.
+ * 
+ * Design:
+ * - localStorage is the source of truth; Worker provides durable backup + cross-device sync.
+ * - Token-based auth: JWT stored in localStorage, sent via Authorization header.
+ * - Dirty-set tracking: local edits marked dirty, pushed with LWW resolution on Worker.
+ */
+
+import { getProfiles, saveProfile, deleteProfile } from 'natalengine';
+import { getAiAccess, setAiAccess } from './people.js';
+
+// 🔑 Единственный источник API — URL вашего Cloudflare Worker
+const WORKER_URL = import.meta.env.VITE_OHD_WORKER_URL;
+
+const AUTH_TOKEN_KEY = 'ohd-auth-token';
+const CURSOR_KEY = 'ohd-sync-cursor';
+const DIRTY_KEY = 'ohd-sync-dirty';
+const DELETES_KEY = 'ohd-sync-deletes';
+
+// Синхронизация доступна только если задан WORKER_URL
+export const syncAvailable = !!WORKER_URL;
+
+let syncing = false;
+let onChange = null;
+
+// --- Auth helpers ----------------------------------------------------------
+function getToken() {
+  if (typeof localStorage === 'undefined') return null;
+  try { return localStorage.getItem(AUTH_TOKEN_KEY); } 
+  catch { return null; }
+}
+
+function setToken(token) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch { /* private mode */ }
+}
+
+// --- API client (Worker-only) ----------------------------------------------
+async function api(path, options = {}) {
+  if (!WORKER_URL) {
+    throw new Error('VITE_OHD_WORKER_URL not configured — sync disabled');
+  }
+  
+  const token = getToken();
+  const headers = {
+    'content-type': 'application/json',
+    ...(token && { 'authorization': `Bearer ${token}` }),
+    ...(options.headers || {})
+  };
+
+  const res = await fetch(`${WORKER_URL}${path}`, {
+    ...options,
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+
+  // 401 = токен истёк/невалиден
+  if (res.status === 401) {
+    setToken(null);
+    throw new Error('AUTH_REQUIRED');
+  }
+  
+  // 404 = эндпоинт не реализован на Worker'е
+  if (res.status === 404) {
+    console.warn(`Endpoint ${path} not found at ${WORKER_URL}`);
+    throw new Error('SYNC_UNAVAILABLE');
+  }
+  
+  if (!res.ok) {
+    throw new Error(`${path}: ${res.status} ${res.statusText}`);
+  }
+  
+  return res.json();
+}
+
+// --- Public auth API -------------------------------------------------------
+export async function getSessionUser() {
+  if (!syncAvailable) return null;
+  try {
+    const data = await api('/api/auth/get-session');
+    return data?.user || null;
+  } catch (e) {
+    // Грациозная обработка: если синхронизация недоступна — просто null
+    if (e.message === 'AUTH_REQUIRED' || e.message === 'SYNC_UNAVAILABLE') {
+      return null;
+    }
+    console.warn('getSessionUser error:', e.message);
+    return null;
+  }
+}
+
+export async function requestMagicLink(email) {
+  if (!syncAvailable) {
+    throw new Error('Sync not configured — set VITE_OHD_WORKER_URL');
+  }
+  return api('/api/auth/magic-link', {
+    method: 'POST',
+    body: { email, callbackURL: '/' }
+  });
+}
+
+export async function completeSignIn(token) {
+  const data = await api('/api/auth/complete', {
+    method: 'POST',
+    body: { token }
+  });
+  if (data?.authToken) {
+    setToken(data.authToken);
+    return data.user;
+  }
+  throw new Error('Invalid sign-in token');
+}
+
+export async function signOut() {
+  setToken(null);
+  // Опционально: отозвать токен на сервере
+  try { await api('/api/auth/revoke', { method: 'POST' }); } 
+  catch { /* best effort */ }
+}
+
+// --- Sync engine -----------------------------------------------------------
+function profileToWire(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    birthDate: p.birthDate,
+    birthTime: p.birthTime,
+    timeUnknown: !!p.timeUnknown,
+    location: p.location || null,
+    aiAccess: getAiAccess(p.id),
+    updatedAt: p.updatedAt,
+    createdAt: p.createdAt
+  };
+}
+
+export async function syncNow({ firstMerge = false } = {}) {
+  // Нет токена = не авторизован = не синхронизируем
+  if (!syncAvailable || !getToken() || syncing) return false;
+  
+  syncing = true;
+  
+  try {
+    const profiles = getProfiles();
+    const dirty = firstMerge 
+      ? new Set(profiles.map(p => p.id)) 
+      : readSet(DIRTY_KEY);
+    const deletes = readSet(DELETES_KEY);
+
+    // Формируем изменения: dirty профили + удалённые (tombstones)
+    const changes = [
+      ...profiles.filter(p => dirty.has(p.id)).map(profileToWire),
+      ...[...deletes].map(id => ({ 
+        id, 
+        deletedAt: new Date().toISOString(), 
+        updatedAt: new Date().toISOString() 
+      }))
+    ];
+    
+    // Если нет изменений и не первый мердж — пропускаем запрос
+    if (changes.length === 0 && !firstMerge) {
+      return true;
+    }
+    
+    const since = firstMerge ? '' : (readSet(CURSOR_KEY) || '');
+
+    const data = await api('/api/sync', {
+      method: 'POST',
+      body: { since, changes }
+    });
+
+    // Очистка: что отправили — больше не dirty
+    writeSet(DIRTY_KEY, new Set());
+    writeSet(DELETES_KEY, new Set());
+
+    // Применяем remote deltas (пропускаем то, что стало dirty снова)
+    const stillDirty = readSet(DIRTY_KEY);
+    let applied = 0;
+    
+    for (const c of data.changes || []) {
+      if (stillDirty.has(c.id)) continue;
+      
+      if (c.deletedAt) {
+        deleteProfile(c.id);
+        applied++;
+        continue;
+      }
+      
+      saveProfile({
+        id: c.id,
+        name: c.name,
+        birthDate: c.birthDate,
+        birthTime: c.birthTime,
+        timeUnknown: c.timeUnknown,
+        location: c.location
+      });
+      setAiAccess(c.id, !!c.aiAccess);
+      applied++;
+    }
+
+    // Сохраняем cursor для следующего sync
+    try { 
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(CURSOR_KEY, data.now); 
+      }
+    } catch { /* private mode */ }
+    
+    // Уведомляем UI о применённых изменениях
+    if (applied && onChange) onChange();
+    return true;
+    
+  } catch (e) {
+    // Не шумим в консоль при ожидаемых ошибках
+    if (e.message !== 'AUTH_REQUIRED' && e.message !== 'SYNC_UNAVAILABLE') {
+      console.warn('sync failed (will retry):', e.message);
+    }
+    return false;
+  } finally {
+    syncing = false;
+  }
+}
+
+// --- Utility functions -----------------------------------------------------
+function readSet(key) {
+  if (typeof localStorage === 'undefined') return new Set();
+  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } 
+  catch { return new Set(); }
+}
+
+function writeSet(key, set) {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.setItem(key, JSON.stringify([...set])); } 
+  catch { /* private mode */ }
+}
+
+export function markDirty(id) {
+  if (!syncAvailable || !id || !getToken()) return;
+  const dirty = readSet(DIRTY_KEY);
+  dirty.add(id);
+  writeSet(DIRTY_KEY, dirty);
+  scheduleSync();
+}
+
+export function markDeleted(id) {
+  if (!syncAvailable || !id || !getToken()) return;
+  const deletes = readSet(DELETES_KEY);
+  deletes.add(id);
+  writeSet(DELETES_KEY, deletes);
+  
+  // Удаляем из dirty: не пушим правки для удалённых
+  const dirty = readSet(DIRTY_KEY);
+  dirty.delete(id);
+  writeSet(DIRTY_KEY, dirty);
+  scheduleSync();
+}
+
+// --- Background sync -------------------------------------------------------
+let timer = null;
+
+export function scheduleSync(delay = 2000) {
+  if (!syncAvailable || !getToken()) return;
+  clearTimeout(timer);
+  timer = setTimeout(() => syncNow(), delay);
+}
+
+export function startSync({ onRemoteChange } = {}) {
+  if (!syncAvailable) {
+    console.debug('Sync disabled: set VITE_OHD_WORKER_URL in .env');
+    return;
+  }
+  
+  onChange = onRemoteChange || null;
+  
+  // Первый мердж если нет cursor'а
+  const hasCursor = typeof localStorage !== 'undefined' 
+    ? localStorage.getItem(CURSOR_KEY) !== null 
+    : false;
+    
+  syncNow({ firstMerge: !hasCursor });
+  
+  // Синхронизация при возврате фокуса в окно
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', () => scheduleSync(200));
+    window.addEventListener('online', () => scheduleSync(500));
+  }
+}
  * - localStorage stays the live source of truth; the server is durable
  *   backup + cross-device fan-out.
  * - Dirty-set tracking: UI-path saves/deletes mark ids dirty; sync pushes
