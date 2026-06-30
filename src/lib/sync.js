@@ -1,106 +1,91 @@
 /**
- * Optional account sync — Cloudflare Worker compatible
+ * Cloudflare Worker Sync — PeopleStore synchronization layer.
  */
 
 import { getProfiles, saveProfile, deleteProfile } from 'natalengine';
 import { getAiAccess, setAiAccess } from './people.js';
 
-// API base: в Worker передаётся через env, в браузере — через import.meta.env
-const API = typeof import.meta !== 'undefined' 
-  ? import.meta.env.VITE_OHD_API_BASE 
-  : undefined;
-
+const WORKER_URL = import.meta.env.VITE_OHD_WORKER_URL;
+const AUTH_TOKEN_KEY = 'ohd-auth-token';
 const CURSOR_KEY = 'ohd-sync-cursor';
 const DIRTY_KEY = 'ohd-sync-dirty';
 const DELETES_KEY = 'ohd-sync-deletes';
 
-export const syncAvailable = !!API;
+export const syncAvailable = !!WORKER_URL;
 
-let syncing = false;
-let onChange = null;
-
-// --- tiny persisted sets -----------------------------------------------
-function readSet(key) {
-  if (typeof localStorage === 'undefined') return new Set();
-  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } 
-  catch { return new Set(); }
+// --- Auth helpers ----------------------------------------------------------
+function getToken() {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch { return null; }
 }
 
-function writeSet(key, set) {
-  if (typeof localStorage === 'undefined') return;
-  try { localStorage.setItem(key, JSON.stringify([...set])); } 
-  catch { /* private mode */ }
+function setToken(token) {
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {}
 }
 
-export function markDirty(id) {
-  if (!syncAvailable || !id) return;
-  const dirty = readSet(DIRTY_KEY);
-  dirty.add(id);
-  writeSet(DIRTY_KEY, dirty);
-  scheduleSync();
-}
-
-export function markDeleted(id) {
-  if (!syncAvailable || !id) return;
-  const deletes = readSet(DELETES_KEY);
-  deletes.add(id);
-  writeSet(DELETES_KEY, deletes);
-  const dirty = readSet(DIRTY_KEY);
-  dirty.delete(id);
-  writeSet(DIRTY_KEY, dirty);
-  scheduleSync();
-}
-
-// --- auth (Worker-compatible) ------------------------------------------
-async function api(path, options = {}, env = null) {
-  const base = env?.API_BASE || API || '';
+async function workerFetch(path, options = {}) {
+  if (!WORKER_URL) throw new Error('Worker URL not configured');
   
-  // Подготовка заголовков: в Worker берём токен из env/request, в браузере — из cookies
+  const token = getToken();
   const headers = {
     'content-type': 'application/json',
-    ...(options.headers || {})
+    ...(token && { 'authorization': `Bearer ${token}` }),
+    ...options.headers
   };
-  
-  // Если есть токен в env (Worker) — добавляем его
-  if (env?.AUTH_TOKEN) {
-    headers['authorization'] = `Bearer ${env.AUTH_TOKEN}`;
-  }
-  
-  const res = await fetch(`${base}${path}`, {
-    // credentials удаляем — в Workers не поддерживается
-    headers,
+
+  const res = await fetch(`${WORKER_URL}${path}`, {
     ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined
+    headers
   });
-  
+
+  if (res.status === 401) {
+    setToken(null);
+    throw new Error('AUTH_REQUIRED');
+  }
   if (!res.ok) throw new Error(`${path}: ${res.status}`);
   return res.json();
 }
 
-export async function getSessionUser(env = null) {
+// --- Public auth API -------------------------------------------------------
+export async function getSessionUser() {
   if (!syncAvailable) return null;
   try {
-    const data = await api('/api/auth/get-session', {}, env);
+    const data = await workerFetch('/auth/verify');
     return data?.user || null;
-  } catch {
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return null;
+    console.warn('Session check failed:', e.message);
     return null;
   }
 }
 
-export async function requestMagicLink(email, env = null) {
-  return api('/api/auth/sign-in/magic-link', {
+export async function requestMagicLink(email, callbackUrl = '/') {
+  return workerFetch('/auth/magic-link', {
     method: 'POST',
-    body: { email, callbackURL: '/' }
-  }, env);
+    body: JSON.stringify({ email, callbackUrl })
+  });
 }
 
-export async function signOut(env = null) {
-  try { 
-    await api('/api/auth/sign-out', { method: 'POST', body: {} }, env); 
-  } catch { /* best effort */ }
+export async function completeSignIn(token) {
+  const data = await workerFetch('/auth/complete', {
+    method: 'POST',
+    body: JSON.stringify({ token })
+  });
+  if (data?.authToken) {
+    setToken(data.authToken);
+    return data.user;
+  }
+  throw new Error('Invalid sign-in token');
 }
 
-// --- sync engine -----------------------------------------------------------
+export async function signOut() {
+  setToken(null);
+  try { await workerFetch('/auth/revoke', { method: 'POST' }); } catch {}
+}
+
+// --- Sync engine -----------------------------------------------------------
 function profileToWire(p) {
   return {
     id: p.id,
@@ -115,19 +100,16 @@ function profileToWire(p) {
   };
 }
 
-export async function syncNow({ firstMerge = false, env = null } = {}) {
-  if (!syncAvailable || syncing) return false;
-  syncing = true;
+export async function syncNow({ firstMerge = false } = {}) {
+  if (!syncAvailable || !getToken()) return false;
   
   try {
     const profiles = getProfiles();
-    const dirty = firstMerge 
-      ? new Set(profiles.map(p => p.id)) 
-      : readSet(DIRTY_KEY);
+    const dirty = firstMerge ? new Set(profiles.map(p => p.id)) : readSet(DIRTY_KEY);
     const deletes = readSet(DELETES_KEY);
 
     const changes = [
-      ...profiles.filter(p => dirty.has(p.id)).map(p => profileToWire(p)),
+      ...profiles.filter(p => dirty.has(p.id)).map(profileToWire),
       ...[...deletes].map(id => ({ 
         id, 
         deletedAt: new Date().toISOString(), 
@@ -135,12 +117,12 @@ export async function syncNow({ firstMerge = false, env = null } = {}) {
       }))
     ];
     
-    const since = firstMerge ? '' : (readSet(CURSOR_KEY) || '');
+    const since = firstMerge ? '' : (localStorage.getItem(CURSOR_KEY) || '');
 
-    const data = await api('/api/sync', {
+    const data = await workerFetch('/sync', {
       method: 'POST',
-      body: { since, changes }
-    }, env);
+      body: JSON.stringify({ since, changes })
+    });
 
     writeSet(DIRTY_KEY, new Set());
     writeSet(DELETES_KEY, new Set());
@@ -167,42 +149,65 @@ export async function syncNow({ firstMerge = false, env = null } = {}) {
       applied++;
     }
 
-    try { 
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(CURSOR_KEY, data.now); 
-      }
-    } catch { /* private mode */ }
-    
+    try { localStorage.setItem(CURSOR_KEY, data.now); } catch {}
     if (applied && onChange) onChange();
     return true;
     
   } catch (e) {
-    console.warn('sync failed (will retry):', e.message);
+    console.warn('sync failed:', e.message);
     return false;
   } finally {
     syncing = false;
   }
 }
 
+// --- Utility functions -----------------------------------------------------
+function readSet(key) {
+  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } 
+  catch { return new Set(); }
+}
+
+function writeSet(key, set) {
+  try { localStorage.setItem(key, JSON.stringify([...set])); } catch {}
+}
+
+export function markDirty(id) {
+  if (!syncAvailable || !id || !getToken()) return;
+  const dirty = readSet(DIRTY_KEY);
+  dirty.add(id);
+  writeSet(DIRTY_KEY, dirty);
+  scheduleSync();
+}
+
+export function markDeleted(id) {
+  if (!syncAvailable || !id || !getToken()) return;
+  const deletes = readSet(DELETES_KEY);
+  deletes.add(id);
+  writeSet(DELETES_KEY, deletes);
+  const dirty = readSet(DIRTY_KEY);
+  dirty.delete(id);
+  writeSet(DIRTY_KEY, dirty);
+  scheduleSync();
+}
+
+// --- Background sync -------------------------------------------------------
 let timer = null;
+let onChange = null;
+let syncing = false;
+
 export function scheduleSync(delay = 2000) {
-  if (!syncAvailable) return;
+  if (!syncAvailable || !getToken()) return;
   clearTimeout(timer);
   timer = setTimeout(() => syncNow(), delay);
 }
 
-export function startSync({ onRemoteChange, env = null } = {}) {
+export function startSync({ onRemoteChange } = {}) {
   if (!syncAvailable) return;
+  
   onChange = onRemoteChange || null;
+  const hasCursor = localStorage.getItem(CURSOR_KEY) !== null;
+  syncNow({ firstMerge: !hasCursor });
   
-  let merged = false;
-  if (typeof localStorage !== 'undefined') {
-    merged = localStorage.getItem(CURSOR_KEY) !== null;
-  }
-  
-  syncNow({ firstMerge: !merged, env });
-  
-  if (typeof window !== 'undefined') {
-    window.addEventListener('focus', () => scheduleSync(200));
-  }
+  window.addEventListener('focus', () => scheduleSync(200));
+  window.addEventListener('online', () => scheduleSync(500));
 }
