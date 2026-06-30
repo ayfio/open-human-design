@@ -1,19 +1,12 @@
 /**
  * Open Human Design — Cloudflare Worker entry.
- *
- * The whole Worker is wrapped by workers-oauth-provider:
- *   /mcp          → the MCP connector (OAuth-protected)
- *   /oauth/token, /oauth/register, /.well-known/* → handled by the provider
- *   everything else → defaultHandler below:
- *     /authorize    → sign-in + consent pages (worker/oauth-ui.js)
- *     /api/auth/*   → better-auth (magic-link sessions for app + consent)
- *     /api/sync     → people sync (LWW deltas; session required)
- *     /*            → static SPA assets (Vite dist/, SPA fallback)
- *
- * See docs/PLATFORM.md.
+ * 
+ * Упрощённая маршрутизация:
+ * - API_ROUTES → handleApiRequest()
+ * - MCP → handleMcpRequest() (без OAuthProvider)
+ * - Остальное → статика через env.ASSETS
  */
 
-import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { handleMcpRequest } from './mcp.js';
 import { createAuth, getSession } from './auth.js';
 import { handleSync } from './sync.js';
@@ -21,7 +14,7 @@ import { handleAuthorize, verifyInterstitial } from './oauth-ui.js';
 import { handleOgImage, handleChartSvg, rewriteShareMeta } from './og.js';
 import { handleSeoPage, handleSitemap, handleRobots } from './seo.js';
 
-// 🔐 MCP CORS — открытый для всех MCP-клиентов
+// 🔐 CORS конфигурация
 const MCP_CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -29,18 +22,16 @@ const MCP_CORS = {
   'Access-Control-Expose-Headers': 'Mcp-Session-Id'
 };
 
-// 🌐 API CORS: credentialed, allowlisted origins only
 const API_ORIGINS = new Set([
   'http://localhost:5174',
   'http://localhost:8788',
-  'https://ejo.neocities.org'  // фронтенд на Neocities
+  'https://ejo.neocities.org'
 ]);
 
-// Проверка origin с поддержкой wildcard для *.neocities.org (опционально)
 function isAllowedOrigin(origin) {
   if (!origin) return false;
   if (API_ORIGINS.has(origin)) return true;
-  // Опционально: разрешить любые *.neocities.org поддомены
+  // Опционально: разрешить *.neocities.org
   // return origin.endsWith('.neocities.org');
   return false;
 }
@@ -64,81 +55,133 @@ function withHeaders(response, extra) {
   return new Response(response.body, { status: response.status, headers });
 }
 
-const defaultHandler = {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const { pathname } = url;
+// 🎯 Маршруты API (обрабатываются в Worker)
+const API_ROUTES = [
+  '/api/',
+  '/auth/',
+  '/oauth/',
+  '/.well-known/',
+  '/og/',
+  '/chart.svg'
+];
 
-    if (pathname === '/og/card.png') {
-      return handleOgImage(request);
-    }
+// ============================================================================
+// 🛠 API Handler — центральная точка для всех API-запросов
+// ============================================================================
 
-    if (pathname === '/chart.svg') {
-      return handleChartSvg(request);
-    }
+async function handleApiRequest(request, env, ctx) {
+  const url = new URL(request.url);
+  const { pathname } = url;
+  const cors = apiCors(request);
 
-    if (pathname === '/authorize') {
-      return handleAuthorize(request, env);
-    }
-
-    if (pathname === '/auth/verify') {
-      return verifyInterstitial(request);
-    }
-
-    if (pathname.startsWith('/api/')) {
-      const cors = apiCors(request);
-      
-      // Preflight CORS запрос
-      if (request.method === 'OPTIONS') {
-        return new Response(null, { status: 204, headers: cors });
-      }
-
-      if (pathname.startsWith('/api/auth/')) {
-        const auth = createAuth(env, url.origin);
-        return withHeaders(await auth.handler(request), cors);
-      }
-
-      if (pathname === '/api/sync' && request.method === 'POST') {
-        const session = await getSession(env, request);
-        if (!session) {
-          return withHeaders(Response.json({ error: 'unauthorized' }, { status: 401 }), cors);
-        }
-        return withHeaders(await handleSync(env, session, request), cors);
-      }
-
-      return withHeaders(Response.json({ error: 'not found' }, { status: 404 }), cors);
-    }
-
-    // SEO: server-rendered reference pages
-    if (pathname === '/sitemap.xml') return handleSitemap();
-    if (pathname === '/robots.txt') return handleRobots();
-    const seoPage = await handleSeoPage(request);
-    if (seoPage) return seoPage;
-
-    // Static assets (SPA) — wrangler serves env.ASSETS with SPA fallback
-    const assetResponse = await env.ASSETS.fetch(request);
-    if (url.searchParams.has('d') && (assetResponse.headers.get('content-type') || '').includes('text/html')) {
-      return rewriteShareMeta(assetResponse, url);
-    }
-    return assetResponse;
+  // Preflight CORS
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: cors });
   }
-};
 
-const mcpHandler = {
+  // 🔐 Auth endpoints (better-auth)
+  if (pathname.startsWith('/api/auth/')) {
+    const auth = createAuth(env, url.origin);
+    return withHeaders(await auth.handler(request), cors);
+  }
+
+  // 🔐 OAuth endpoints (workers-oauth-provider)
+  if (pathname === '/authorize') {
+    return handleAuthorize(request, env);
+  }
+  if (pathname === '/auth/verify') {
+    return verifyInterstitial(request);
+  }
+  if (pathname.startsWith('/oauth/') || pathname.startsWith('/.well-known/')) {
+    // Делегируем OAuth-провайдеру при необходимости
+    // Или реализуем свою логику здесь
+    return withHeaders(Response.json({ error: 'OAuth not configured' }, { status: 501 }), cors);
+  }
+
+  // 🔄 Sync endpoint
+  if (pathname === '/api/sync' && request.method === 'POST') {
+    const session = await getSession(env, request);
+    if (!session) {
+      return withHeaders(Response.json({ error: 'unauthorized' }, { status: 401 }), cors);
+    }
+    return withHeaders(await handleSync(env, session, request), cors);
+  }
+
+  // 🖼️ OG images & chart SVG
+  if (pathname === '/og/card.png') {
+    return handleOgImage(request);
+  }
+  if (pathname === '/chart.svg') {
+    return handleChartSvg(request);
+  }
+
+  // ❌ Unknown API endpoint
+  return withHeaders(Response.json({ error: 'not found' }, { status: 404 }), cors);
+}
+
+// ============================================================================
+// 🤖 MCP Handler — Model Context Protocol (без OAuthProvider)
+// ============================================================================
+
+async function handleMcpRequestStandalone(request, env, ctx) {
+  // Preflight CORS для MCP
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: MCP_CORS });
+  }
+  
+  // Обработка MCP запроса с добавлением CORS
+  return withHeaders(
+    await handleMcpRequest(request, env, ctx?.props),
+    MCP_CORS
+  );
+}
+
+// ============================================================================
+// 🌐 Default Handler — статика + SEO
+// ============================================================================
+
+async function handleStaticRequest(request, env) {
+  const url = new URL(request.url);
+  const { pathname } = url;
+
+  // SEO: server-rendered reference pages
+  if (pathname === '/sitemap.xml') return handleSitemap();
+  if (pathname === '/robots.txt') return handleRobots();
+  const seoPage = await handleSeoPage(request);
+  if (seoPage) return seoPage;
+
+  // Static assets (SPA) — wrangler serves env.ASSETS with SPA fallback
+  const assetResponse = await env.ASSETS.fetch(request);
+  
+  // Share links (?d=...) get their OpenGraph tags rewritten
+  if (url.searchParams.has('d') && 
+      (assetResponse.headers.get('content-type') || '').includes('text/html')) {
+    return rewriteShareMeta(assetResponse, url);
+  }
+  
+  return assetResponse;
+}
+
+// ============================================================================
+// 🚀 Main Entry Point
+// ============================================================================
+
+export default {
   async fetch(request, env, ctx) {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: MCP_CORS });
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+
+    // 🎯 MCP endpoint — отдельная обработка
+    if (pathname === '/mcp') {
+      return handleMcpRequestStandalone(request, env, ctx);
     }
-    return withHeaders(await handleMcpRequest(request, env, ctx?.props), MCP_CORS);
+
+    // 🎯 API routes — делегируем handleApiRequest
+    if (API_ROUTES.some(route => pathname === route || pathname.startsWith(route))) {
+      return handleApiRequest(request, env, ctx);
+    }
+
+    // 🎯 Static assets + SEO — делегируем handleStaticRequest
+    return handleStaticRequest(request, env);
   }
 };
-
-export default new OAuthProvider({
-  apiRoute: '/mcp',
-  apiHandler: mcpHandler,
-  defaultHandler,
-  authorizeEndpoint: '/authorize',
-  tokenEndpoint: '/oauth/token',
-  clientRegistrationEndpoint: '/oauth/register',
-  scopesSupported: ['charts:read', 'charts:write']
-});
